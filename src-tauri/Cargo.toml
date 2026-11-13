@@ -2,7 +2,7 @@
 name = "huijing"
 version = "0.1.0"
 description = "绘境 · AI 出图桌面应用"
-authors = ["aowu"]
+authors = ["byttao"]
 edition = "2024"
 
 [lib]

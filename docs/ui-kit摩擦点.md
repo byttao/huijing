@@ -1,6 +1,6 @@
 # 绘境 · 使用 ui-kit v1.2.0 的摩擦点清单
 
-项目：`/Users/aowu/Documents/同步盘/项目开发/绘境`（ui-kit 原样拷在 `src/ui-kit/`，未改动）。
+项目：绘境（ui-kit 原样拷在 `src/ui-kit/`，未改动）。
 
 ## 一、缺失 / 不够用，只好在 kit 外自写的组件
 
