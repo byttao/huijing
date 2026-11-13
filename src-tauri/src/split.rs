@@ -2,7 +2,7 @@
 //!
 //! 拆切：按 cols×rows 等分，但模型偶尔会画出细分隔线、或格线不在正中——在每条内部格线附近
 //! 一个窄带里找「整列 / 整行近似纯色」的线，找到就把它从两侧格子里裁掉；再对内部边各内缩一点点
-//! 去掉接缝处的过渡；最后把每格居中裁到目标比例。
+//! 去掉接缝处的过渡。不再按目标比例裁切：每格比例由宫格等分决定。
 //! 缩放：统一用 fast_image_resize 的 Lanczos3（运行时自动启用 SSE4.1 / AVX2 / NEON）。
 
 use fast_image_resize::{FilterType, ResizeAlg, ResizeOptions, Resizer};
@@ -124,8 +124,8 @@ fn spans(total: u32, parts: u32, band: u32, inset: u32, is_line: impl Fn(u32) ->
         .collect()
 }
 
-/// 按宫格拆切，每格居中裁到 ratio。返回从左到右、从上到下的 N 张。
-pub fn split_grid(img: &DynamicImage, cols: u32, rows: u32, ratio: (u32, u32)) -> Vec<DynamicImage> {
+/// 按宫格等分拆切（检测并裁掉分隔线）。返回从左到右、从上到下的 N 张。
+pub fn split_grid(img: &DynamicImage, cols: u32, rows: u32) -> Vec<DynamicImage> {
     let (w, h) = img.dimensions();
     let (cols, rows) = (cols.max(1), rows.max(1));
     let cell_w = w / cols;
@@ -140,11 +140,7 @@ pub fn split_grid(img: &DynamicImage, cols: u32, rows: u32, ratio: (u32, u32)) -
     let mut out = Vec::with_capacity((cols * rows) as usize);
     for &(y0, y1) in &ys {
         for &(x0, x1) in &xs {
-            let (cw, ch) = (x1 - x0, y1 - y0);
-            let [fw, fh] = crate::grid::fit_ratio(cw, ch, ratio);
-            let cx = x0 + (cw - fw) / 2;
-            let cy = y0 + (ch - fh) / 2;
-            out.push(img.crop_imm(cx, cy, fw, fh));
+            out.push(img.crop_imm(x0, y0, x1 - x0, y1 - y0));
         }
     }
     out
@@ -198,7 +194,7 @@ mod tests {
     #[test]
     fn plain_grid_splits_evenly() {
         let img = synth(1000, 1000, 2, 2, 0, 0);
-        let parts = split_grid(&img, 2, 2, (1, 1));
+        let parts = split_grid(&img, 2, 2);
         assert_eq!(parts.len(), 4);
         for p in &parts {
             let (w, h) = p.dimensions();
@@ -211,24 +207,26 @@ mod tests {
     #[test]
     fn removes_separator_lines_even_when_offset() {
         let img = synth(1200, 800, 2, 2, 8, 9);
-        let parts = split_grid(&img, 2, 2, (3, 2));
+        let parts = split_grid(&img, 2, 2);
         assert_eq!(parts.len(), 4);
         for p in &parts {
             assert!(!has_white_edge(p), "切出的格子边上不应带分隔线");
+            // 格线偏了 9 像素，两侧格子不再等大；只裁掉线，不另裁比例
             let (w, h) = p.dimensions();
-            assert!((w as f64 / h as f64 - 1.5).abs() < 0.02, "{w}x{h}");
+            assert!((575..=615).contains(&w) && (375..=420).contains(&h), "{w}x{h}");
         }
     }
 
     #[test]
-    fn three_in_a_row_with_center_crop() {
-        // 3×1 合成比例 21:9（每格 7:9），目标 1:1 → 每格居中裁成方形
+    fn three_in_a_row_keeps_full_cells() {
+        // 21:9 横排 3 张：每格 7:9，等分不裁比例
         let img = synth(2100, 900, 3, 1, 6, 0);
-        let parts = split_grid(&img, 3, 1, (1, 1));
+        let parts = split_grid(&img, 3, 1);
         assert_eq!(parts.len(), 3);
         for p in &parts {
             let (w, h) = p.dimensions();
-            assert_eq!(w, h);
+            assert_eq!(h, 900);
+            assert!((680..=700).contains(&w), "{w}");
             assert!(!has_white_edge(p));
         }
     }

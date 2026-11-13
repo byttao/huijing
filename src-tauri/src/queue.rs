@@ -113,6 +113,47 @@ pub struct Task {
     /// 非致命提示，例如拆切失败只保留了合成原图
     #[serde(default)]
     pub notice: Option<String>,
+    /// 持久的自增序号（#12），删除后不复用；旧记录按创建时间补号
+    #[serde(default)]
+    pub number: u64,
+    /// 「改自」的原记录序号（原记录删了也能显示「改自 #7」）
+    #[serde(default)]
+    pub parent_number: Option<u64>,
+    /// 改自原记录多合一的第几张（从 1 开始），用于显示「改自 #7-2」
+    #[serde(default)]
+    pub parent_part: Option<u32>,
+}
+
+/// 给没有序号的记录按创建时间补号，并补全「改自」的原记录序号与切片号。
+/// `next` 是文件里记下的下一个序号（保证删除后不复用），返回新的 next。
+pub fn assign_numbers(tasks: &mut [Task], next: u64) -> u64 {
+    let max = tasks.iter().map(|t| t.number).max().unwrap_or(0);
+    let mut next = next.max(max + 1);
+    let mut missing: Vec<usize> = (0..tasks.len()).filter(|&i| tasks[i].number == 0).collect();
+    missing.sort_by_key(|&i| (tasks[i].created_at, i));
+    for i in missing {
+        tasks[i].number = next;
+        next += 1;
+    }
+    let lookup: HashMap<String, (u64, Vec<String>)> = tasks.iter().map(|t| (t.id.clone(), (t.number, t.files.clone()))).collect();
+    for t in tasks.iter_mut() {
+        if t.parent_number.is_none()
+            && let Some((number, files)) = t.parent_id.as_ref().and_then(|p| lookup.get(p))
+        {
+            t.parent_number = Some(*number);
+            t.parent_part = part_index(files, t.ref_images.first());
+        }
+    }
+    next
+}
+
+/// 参考图是原记录多合一的第几张（单张记录返回 None）
+fn part_index(files: &[String], reference: Option<&String>) -> Option<u32> {
+    if files.len() < 2 {
+        return None;
+    }
+    let r = reference?;
+    files.iter().position(|f| f == r).map(|i| i as u32 + 1)
 }
 
 fn default_one() -> u8 {
@@ -318,6 +359,9 @@ pub fn build_task(req: &EnqueueRequest, now: i64, upscale: bool, mut next_id: im
         grid: Some(plan),
         composite_file: None,
         notice: None,
+        number: 0,
+        parent_number: None,
+        parent_part: None,
     })
 }
 
@@ -349,6 +393,9 @@ pub fn pick_to_start(tasks: &[Task], running: usize, limit: usize) -> Vec<String
 struct TaskFile {
     version: u32,
     tasks: Vec<Task>,
+    /// 下一个任务序号；删除记录后也不回退
+    #[serde(default, rename = "nextNumber")]
+    next_number: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -372,6 +419,7 @@ struct Running {
 struct State {
     tasks: Vec<Task>,
     running: HashMap<String, Running>,
+    next_number: u64,
 }
 
 pub struct Queue {
@@ -389,17 +437,18 @@ pub fn now_ms() -> i64 {
 
 impl Queue {
     pub fn new(app: AppHandle, settings: Arc<RwLock<Settings>>, tasks_path: PathBuf, default_output_dir: PathBuf) -> Arc<Self> {
-        let tasks = std::fs::read_to_string(&tasks_path)
+        let (mut tasks, next) = std::fs::read_to_string(&tasks_path)
             .ok()
             .and_then(|text| serde_json::from_str::<TaskFile>(&text).ok())
-            .map(|f| f.tasks)
+            .map(|f| (f.tasks, f.next_number))
             .unwrap_or_default();
+        let next_number = assign_numbers(&mut tasks, next);
         Arc::new(Self {
             app,
             settings,
             tasks_path,
             default_output_dir,
-            state: Mutex::new(State { tasks, running: HashMap::new() }),
+            state: Mutex::new(State { tasks, running: HashMap::new(), next_number }),
             counter: AtomicU64::new(0),
         })
     }
@@ -423,7 +472,7 @@ impl Queue {
     }
 
     fn save(&self, st: &State) {
-        let file = TaskFile { version: 1, tasks: st.tasks.clone() };
+        let file = TaskFile { version: 1, tasks: st.tasks.clone(), next_number: st.next_number };
         if let Ok(text) = serde_json::to_string_pretty(&file)
             && let Err(e) = write_atomic(&self.tasks_path, text.as_bytes())
         {
@@ -539,9 +588,15 @@ impl Queue {
                 return Err(format!("参考图不存在：{path}"));
             }
         }
-        let task = build_task(&req, now_ms(), settings.upscale_parts, || self.next_id())?;
-        let tasks = vec![task.clone()];
+        let mut task = build_task(&req, now_ms(), settings.upscale_parts, || self.next_id())?;
         let mut st = self.lock();
+        task.number = st.next_number;
+        st.next_number += 1;
+        if let Some(parent) = task.parent_id.as_ref().and_then(|p| st.tasks.iter().find(|t| &t.id == p)) {
+            task.parent_number = Some(parent.number);
+            task.parent_part = part_index(&parent.files, task.ref_images.first());
+        }
+        let tasks = vec![task.clone()];
         st.tasks.push(task.clone());
         self.emit(&task);
         self.save(&st);
@@ -797,24 +852,24 @@ pub fn test_api(settings: &Settings) -> impl std::future::Future<Output = Result
     }
 }
 
-/// 把合成原图按宫格拆成多张 PNG，写在原图旁边：`…_01-宫格.png` → `…_01-1.png` … 。
-/// 开了「放大到单张原尺寸」时每张用 Lanczos3 缩放到 `plan.output_size`。
+/// 把合成原图按宫格等分拆成多张 PNG，写在原图旁边：`…_01-宫格.png` → `…_01-1.png` … 。
+/// 开了「拆切后放大」时每张用 Lanczos3 等比放大到整张图的长边（以实际合成图为准）。
 pub fn split_composites(composites: &[String], plan: &GridPlan, dir: &Path) -> Result<Vec<String>, String> {
-    let ratio = grid::parse_ratio(&plan.cell_ratio).ok_or("比例无效")?;
     let mut out = Vec::new();
     for composite in composites {
         let path = Path::new(composite);
         let img = image::open(path).map_err(|e| format!("读取合成图失败：{e}"))?;
         let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         let stem = stem.strip_suffix("-宫格").unwrap_or(&stem).to_string();
-        // 目标尺寸以实际合成图为准（预览里的 output_size 只是估算）；放大时每格直接按目标尺寸的
-        // 比例裁切（模型自己的尺寸未必是严格的 a:b，如 16:9 是 1376×768），缩放时就不会变形
-        let target = if plan.upscale { grid::target_from_composite(img.dimensions(), plan) } else { None };
-        let crop_ratio = target.map(|[w, h]| (w, h)).unwrap_or(ratio);
-        for (k, part) in crate::split::split_grid(&img, plan.cols as u32, plan.rows as u32, crop_ratio).into_iter().enumerate() {
-            let part = match target {
-                Some([w, h]) => crate::split::resize(&part, w, h)?,
-                None => part,
+        let target_long = grid::target_long_side(img.dimensions(), plan);
+        for (k, part) in crate::split::split_grid(&img, plan.cols as u32, plan.rows as u32).into_iter().enumerate() {
+            let size = [part.width(), part.height()];
+            let part = match target_long {
+                Some(long) if long > size[0].max(size[1]) => {
+                    let [w, h] = grid::scale_to_long(size, long);
+                    crate::split::resize(&part, w, h)?
+                }
+                _ => part,
             };
             let dest = download::reserve_unique(dir, &format!("{stem}-{}.png", k + 1)).map_err(|e| format!("创建文件失败：{e}"))?;
             part.save_with_format(&dest, image::ImageFormat::Png).map_err(|e| format!("保存拆切图失败：{e}"))?;
@@ -879,10 +934,11 @@ mod tests {
         assert_eq!((params.aspect_ratio.as_str(), params.image_size.as_str()), ("16:9", "2K"));
         assert_eq!(t.params.image_size, "1K", "任务里保存的仍是用户参数");
 
-        // 比例 auto 不能多合一
+        // 比例 auto 也允许多合一（每张比例取决于实际出图）
         let mut auto = request(Mode::Text, 0, 2);
         auto.params.aspect_ratio = "auto".into();
-        assert!(build_task(&auto, 1, true, ids()).is_err());
+        let t = build_task(&auto, 1, true, ids()).unwrap();
+        assert_eq!(request_of(&t).1.aspect_ratio, "auto");
     }
 
     #[test]
@@ -905,10 +961,40 @@ mod tests {
         assert_eq!(parts.len(), 4);
         assert!(parts[0].ends_with("a_01-1.png") && parts[3].ends_with("a_01-4.png"));
         for p in &parts {
-            // 同档位单张与合成图总像素相同：400×400 的合成图 → 单张 400×400
-            assert_eq!(image::open(p).unwrap().dimensions(), (400, 400), "放大到单张原尺寸");
+            // 2×2 等分后每张 200×200，放大到整张图长边 400
+            assert_eq!(image::open(p).unwrap().dimensions(), (400, 400), "放大到整张图的长边");
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn numbering_never_reuses_and_backfills_old_records() {
+        let mut tasks: Vec<Task> = (0..3)
+            .map(|i| {
+                let mut t = task();
+                t.id = format!("t{i}");
+                t.created_at = 100 - i as i64; // 倒序创建：t2 最早
+                t
+            })
+            .collect();
+        let next = assign_numbers(&mut tasks, 0);
+        assert_eq!((tasks[2].number, tasks[1].number, tasks[0].number, next), (1, 2, 3, 4));
+        // 文件里记的 next 比现有最大号大（删过记录），不回退
+        let mut t = vec![task()];
+        t[0].number = 2;
+        assert_eq!(assign_numbers(&mut t, 9), 9);
+        // 补「改自」：原记录多合一的第 2 张
+        let mut parent = task();
+        parent.id = "p".into();
+        parent.number = 7;
+        parent.files = vec!["/a-1.png".into(), "/a-2.png".into()];
+        let mut child = task();
+        child.id = "c".into();
+        child.parent_id = Some("p".into());
+        child.ref_images = vec!["/a-2.png".into()];
+        let mut both = vec![parent, child];
+        assign_numbers(&mut both, 0);
+        assert_eq!((both[1].parent_number, both[1].parent_part), (Some(7), Some(2)));
     }
 
     #[test]
@@ -1025,7 +1111,7 @@ mod tests {
         assert_eq!(back, t);
         // 旧版本写下的记录没有新字段，也要能读
         let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        for key in ["inQueue", "count", "grid", "sentPrompt", "compositeFile", "notice"] {
+        for key in ["inQueue", "count", "grid", "sentPrompt", "compositeFile", "notice", "number", "parentNumber", "parentPart"] {
             v.as_object_mut().unwrap().remove(key);
         }
         let old: Task = serde_json::from_value(v).unwrap();

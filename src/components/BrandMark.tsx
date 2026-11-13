@@ -1,15 +1,20 @@
+import brandMark from "../assets/brand-mark.png";
+
 /**
- * 侧栏品牌标记：与应用图标（src-tauri/app-icon.svg）同一图形——画框山水 + 星光笔触。
- * 单色 currentColor，颜色由 AppShell 的反色块决定，随主题变化。
+ * 品牌标记：直接用应用图标（src-tauri/app-icon.svg 裁到底板、去掉阴影，四角透明），
+ * 各主题、深浅色下都显示同一张图。
+ *
+ * AppShell 把 brand.mark 放在 40px 的反色块里（为单色字形设计），这里把图标画成 42px、
+ * 略大于色块并居中，正好盖住色块与圆角，不改 ui-kit 也能显示原色图标。
  */
-export function BrandMark() {
+export function BrandMark({ size = "shell" }: { size?: "shell" | "md" }) {
   return (
-    <svg viewBox="0 0 64 64" className="size-7" aria-hidden>
-      <rect x="6" y="14" width="44" height="40" rx="7" fill="none" stroke="currentColor" strokeWidth="4.5" />
-      <circle cx="37" cy="27" r="4.2" fill="currentColor" />
-      <path d="M8 49 L21 34 Q23 32 25 34 L33 43 L38 38 Q40 36 42 38 L48 44 L48 52 L8 52 Z" fill="currentColor" />
-      <path d="M33 22 Q42 15 50 12" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
-      <path d="M52 2 C53 7 54.5 8.5 59.5 9.5 C54.5 10.5 53 12 52 17 C51 12 49.5 10.5 44.5 9.5 C49.5 8.5 51 7 52 2 Z" fill="currentColor" />
-    </svg>
+    <img
+      src={brandMark}
+      alt=""
+      aria-hidden
+      draggable={false}
+      className={size === "shell" ? "size-[42px] max-w-none select-none" : "size-10 select-none"}
+    />
   );
 }

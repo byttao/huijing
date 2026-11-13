@@ -54,6 +54,12 @@ export const OUTPUT_FORMATS = [
 ];
 
 /** 参数摘要，用于任务行与图库 */
+/** 记录编号：#12；多合一切片 #12-1 */
+export function taskNo(task: { number: number; files: string[] }, file?: string) {
+  const i = file && task.files.length > 1 ? task.files.indexOf(file) : -1;
+  return i >= 0 ? `#${task.number}-${i + 1}` : `#${task.number}`;
+}
+
 export const sizeText = ([w, h]: [number, number]) => (w && h ? `${w}×${h}` : "自动");
 
 export function paramsSummary(model: ModelId, p: GenParams) {

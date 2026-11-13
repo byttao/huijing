@@ -5,7 +5,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { ListWell, LogViewer, Page, Panel, Workspace, cn, fileName, useLogger } from "../ui-kit";
 import { Thumb } from "../components/Thumb";
 import { api, errorText } from "../lib/api";
-import { formatTime, modeLabel, modelLabel, paramsSummary, shortPrompt } from "../lib/options";
+import { formatTime, modeLabel, modelLabel, paramsSummary, shortPrompt, taskNo } from "../lib/options";
 import type { ModelId, Task } from "../lib/types";
 
 interface GalleryItem {
@@ -24,9 +24,11 @@ const FILTERS = [
 interface GalleryPageProps {
   tasks: Task[];
   onEdit: (task: Task, file?: string) => void;
+  /** 从队列「改自」跳过来时要定位的图 */
+  focus: { taskId: string; file?: string; nonce: number } | null;
 }
 
-export function GalleryPage({ tasks, onEdit }: GalleryPageProps) {
+export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
   // 变量名用 toast：App.useApp() 的 message，与静态 message 区分（也让 AI_GUIDE 自检的字面搜索通过）
   const { message: toast, modal } = AntApp.useApp();
   const { logs, log, clear } = useLogger();
@@ -44,6 +46,21 @@ export function GalleryPage({ tasks, onEdit }: GalleryPageProps) {
   );
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const selected = items.find((i) => i.key === selectedKey) ?? items[0] ?? null;
+
+  // 定位某条记录（某一张）：清掉筛选、选中并滚到可见
+  const locate = (taskId: string, file?: string) => {
+    const task = tasks.find((t) => t.id === taskId);
+    const key = file ?? task?.files[0];
+    if (!task || !key) return false;
+    setFilter("all");
+    setSelectedKey(key);
+    window.setTimeout(() => document.getElementById(`tile-${key}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    return true;
+  };
+  useEffect(() => {
+    if (focus) locate(focus.taskId, focus.file);
+    // 只在收到新的定位请求时执行
+  }, [focus]);
 
   // 选中项被删除后回到第一张
   useEffect(() => {
@@ -109,13 +126,36 @@ export function GalleryPage({ tasks, onEdit }: GalleryPageProps) {
                     size="small"
                     column={1}
                     items={[
+                      { key: "no", label: "编号", children: taskNo(selected.task, selected.file) },
                       { key: "model", label: "模型", children: modelLabel(selected.task.model) },
                       { key: "mode", label: "模式", children: modeLabel(selected.task.mode) },
                       ...(selected.task.count > 1
                         ? [{ key: "part", label: "多合一", children: `第 ${selected.task.files.indexOf(selected.file) + 1} / ${selected.task.files.length} 张` }]
                         : []),
                       { key: "params", label: "参数", children: paramsSummary(selected.task.model, selected.task.params) },
-                      ...(parent ? [{ key: "parent", label: "改自", children: `「${shortPrompt(parent.prompt, 14)}」` }] : []),
+                      ...(selected.task.parentId
+                        ? [
+                            {
+                              key: "parent",
+                              label: "改自",
+                              children: parent ? (
+                                <Button
+                                  type="link"
+                                  size="small"
+                                  className="h-auto p-0"
+                                  onClick={() => locate(parent.id, selected.task.parentPart ? parent.files[selected.task.parentPart - 1] : undefined)}
+                                >
+                                  #{parent.number}
+                                  {selected.task.parentPart ? `-${selected.task.parentPart}` : ""}「{shortPrompt(parent.prompt, 8)}」
+                                </Button>
+                              ) : (
+                                <span className="text-text-tertiary">
+                                  {selected.task.parentNumber ? `#${selected.task.parentNumber}` : ""}（原记录已删除）
+                                </span>
+                              ),
+                            },
+                          ]
+                        : []),
                       { key: "time", label: "完成", children: formatTime(selected.task.finishedAt ?? selected.task.createdAt) },
                       {
                         key: "file",
@@ -178,11 +218,11 @@ export function GalleryPage({ tasks, onEdit }: GalleryPageProps) {
                 {items.map((item) => {
                   const isSelected = selected?.key === item.key;
                   return (
-                    <li key={item.key}>
+                    <li key={item.key} id={`tile-${item.key}`} className="relative">
                       <button
                         type="button"
                         aria-pressed={isSelected}
-                        title={`${item.task.prompt}\n双击查看大图`}
+                        title={`${taskNo(item.task, item.file)} ${item.task.prompt}\n双击查看大图`}
                         onClick={() => setSelectedKey(item.key)}
                         onDoubleClick={() => openPreview(item.key)}
                         className={cn(
@@ -192,6 +232,9 @@ export function GalleryPage({ tasks, onEdit }: GalleryPageProps) {
                       >
                         <img src={convertFileSrc(item.file)} alt={item.task.prompt} loading="lazy" className="size-full object-cover" />
                       </button>
+                      <span className="pointer-events-none absolute left-1.5 top-1.5 rounded-sm border bg-container px-1 text-sm tabular-nums text-text-secondary">
+                        {taskNo(item.task, item.file)}
+                      </span>
                     </li>
                   );
                 })}

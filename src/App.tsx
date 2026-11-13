@@ -18,6 +18,7 @@ export default function App() {
   const { tasks, loaded: tasksLoaded } = useTasks();
   const [view, setView] = useState<SettingsView | null>(null);
   const [editRequest, setEditRequest] = useState<EditRequest | null>(null);
+  const [galleryFocus, setGalleryFocus] = useState<{ taskId: string; file?: string; nonce: number } | null>(null);
   // 变量名用 toast：App.useApp() 的 message，与静态 message 区分（也让 AI_GUIDE 自检的字面搜索通过）
   const { message: toast } = AntApp.useApp();
 
@@ -92,10 +93,15 @@ export default function App() {
           editRequest={editRequest}
           onEdit={startEdit}
           onGoSettings={() => setPage("settings")}
+          onShowInGallery={(task, file) => {
+            setGalleryFocus({ taskId: task.id, file, nonce: Date.now() });
+            setPage("gallery");
+            toast.info(`#${task.number} 已从队列清除，在图库中定位`);
+          }}
         />
       </div>
       <div className={cn("h-full", page !== "gallery" && "hidden")}>
-        <GalleryPage tasks={tasks} onEdit={startEdit} />
+        <GalleryPage tasks={tasks} onEdit={startEdit} focus={galleryFocus} />
       </div>
       <div className={cn("h-full", page !== "settings" && "hidden")}>
         <SettingsPage view={view} onSaved={setView} />

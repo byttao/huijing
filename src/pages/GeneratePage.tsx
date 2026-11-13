@@ -44,9 +44,11 @@ interface GeneratePageProps {
   editRequest: EditRequest | null;
   onEdit: (task: Task) => void;
   onGoSettings: () => void;
+  /** 原记录已从队列清除（仍在图库）时，跳到图库定位 */
+  onShowInGallery: (task: Task, file?: string) => void;
 }
 
-export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest, onEdit, onGoSettings }: GeneratePageProps) {
+export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest, onEdit, onGoSettings, onShowInGallery }: GeneratePageProps) {
   // 变量名用 toast：App.useApp() 的 message，与静态 message 区分（也让 AI_GUIDE 自检的字面搜索通过）
   const { message: toast, modal } = AntApp.useApp();
   const { logs, log, clear } = useLogger();
@@ -54,8 +56,8 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
   const [mode, setMode] = useState<Mode>("text");
   const [model, setModel] = useState<ModelId>("nano-banana-2.1");
   const [prompt, setPrompt] = useState("");
-  const [gptParams, setGptParams] = useState<GenParams>({ aspectRatio: "1:1", imageSize: "1K", background: "", outputFormat: "png", higherRes: false });
-  const [nanoParams, setNanoParams] = useState<GenParams>({ aspectRatio: "auto", imageSize: "1K", background: "", outputFormat: "png", higherRes: false });
+  const [gptParams, setGptParams] = useState<GenParams>({ aspectRatio: "1:1", imageSize: "1K", background: "", outputFormat: "png", higherRes: false, layout: "" });
+  const [nanoParams, setNanoParams] = useState<GenParams>({ aspectRatio: "auto", imageSize: "1K", background: "", outputFormat: "png", higherRes: false, layout: "" });
   const [count, setCount] = useState(1);
   const [refs, setRefs] = useState<string[]>([]);
   const [editSource, setEditSource] = useState<{ task: Task; file: string } | null>(null);
@@ -153,13 +155,11 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
     };
   }, [model, params, count, upscaleSetting]);
 
-  // 比例为自动、或 GPT 选了 GIF / SVG 时不能多合一
+  // GPT 选了 GIF / SVG 时不能多合一（无法拆切）；比例为自动时可以，每张比例取决于实际出图
   const multiBlocked =
-    params.aspectRatio === "auto"
-      ? "比例为「自动」时无法多合一，请先选一个具体比例"
-      : model === "gpt-image-2.6" && (params.outputFormat === "gif" || params.outputFormat === "svg")
-        ? "GIF / SVG 输出无法拆切，多合一请用 PNG"
-        : null;
+    model === "gpt-image-2.6" && (params.outputFormat === "gif" || params.outputFormat === "svg")
+      ? "GIF / SVG 输出无法拆切，多合一请用 PNG"
+      : null;
   useEffect(() => {
     if (multiBlocked && count > 1) setCount(1);
   }, [multiBlocked, count]);
@@ -218,6 +218,23 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
       log(`${label}失败：${errorText(err)}`, "error");
       toast.error(errorText(err));
     }
+  };
+
+  // 「改自 #7」：滚动到原记录并高亮闪一下；原记录已移出队列时去图库定位
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  const jumpToParent = (task: Task) => {
+    const parent = task.parentId ? byId.get(task.parentId) : undefined;
+    if (!parent) return;
+    const parentFile = task.parentPart ? parent.files[task.parentPart - 1] : undefined;
+    if (!parent.inQueue) {
+      onShowInGallery(parent, parentFile);
+      return;
+    }
+    document.getElementById(`task-row-${parent.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashId(parent.id);
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlashId(null), 1600);
   };
 
   const actions = {
@@ -346,13 +363,32 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
 
                   <Form.Item
                     label="张数"
-                    extra={multiBlocked ?? (count > 1 ? `一次请求在一张图里画 ${count} 个方案，只扣一次费，下载后自动拆成 ${count} 张` : "选 2–4 张时合在一张图里出，再自动拆切")}
+                    extra={
+                      multiBlocked ??
+                      (count > 1
+                        ? `整张图仍是所选比例，一次请求画 ${count} 个方案、只扣一次费，下载后按宫格等分拆成 ${count} 张`
+                        : "选 2–4 张时在一张图里按宫格画多个方案，再等分拆切")
+                    }
                   >
                     <Segmented block options={COUNTS} value={count} disabled={!!multiBlocked} onChange={(v) => setCount(Number(v))} />
                   </Form.Item>
 
+                  {(count === 2 || count === 3) && (
+                    <Form.Item label="排法" extra="默认取每张更接近方形的一种：横图并排、竖图上下叠">
+                      <Segmented
+                        block
+                        options={[
+                          { value: "row", label: `横排 ${count}×1` },
+                          { value: "column", label: `竖排 1×${count}` },
+                        ]}
+                        value={plan?.orientation || "row"}
+                        onChange={(v) => setParams({ layout: String(v) })}
+                      />
+                    </Form.Item>
+                  )}
+
                   {model === "nano-banana-2.1" && count > 1 && (
-                    <Form.Item extra={params.imageSize === "4K" ? "已是最高档 4K，无法再升档" : "例如 1K × 4 张用 2K 请求，切出来是原生 1K、不靠放大。高档位单价可能更高"}>
+                    <Form.Item extra={params.imageSize === "4K" ? "已是最高档 4K，无法再升档" : "选 1K 时用 2K 请求，切出来每张像素更多、少靠放大（4 合 1 时正好是原生 1K）。高档位单价可能更高"}>
                       <Checkbox checked={params.higherRes} disabled={params.imageSize === "4K"} onChange={(e) => setParams({ higherRes: e.target.checked })}>
                         合图使用更高一档分辨率
                       </Checkbox>
@@ -408,7 +444,14 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
             ) : (
               <ul className="m-0 list-none p-0">
                 {queue.map((t) => (
-                  <TaskRow key={t.id} task={t} parent={t.parentId ? byId.get(t.parentId) : undefined} {...actions} />
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    parent={t.parentId ? byId.get(t.parentId) : undefined}
+                    highlighted={flashId === t.id}
+                    onJumpParent={jumpToParent}
+                    {...actions}
+                  />
                 ))}
               </ul>
             )}

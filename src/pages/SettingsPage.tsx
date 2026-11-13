@@ -151,9 +151,7 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
           <>
             <Panel title="关于绘境">
               <div className="flex items-center gap-3">
-                <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary text-text-light-solid">
-                  <BrandMark />
-                </span>
+                <BrandMark size="md" />
                 <div className="min-w-0">
                   <div className="text-lg font-strong">绘境</div>
                   <div className="text-sm text-text-tertiary">AI 出图 · 文生图 / 图生图 / 继续修改</div>
@@ -303,9 +301,9 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
               </Section>
 
               <Section title="多合一">
-                <Form.Item extra="多合一拆切后，把每张缩放到该模型单独出一张时的尺寸（Lanczos3 算法）；关闭则保留拆切出的原始尺寸">
+                <Form.Item extra="多合一按宫格等分后，每张比整张图小。开启后每张等比放大，使长边等于整张图的长边（如 16:9 整张 1376×768 的 2×2 切片 688×384 → 1376×768），用 Lanczos3 算法；关闭则保留等分后的原始像素。Nano 勾了「合图使用更高一档分辨率」时以原档位整张图的长边为准">
                   <Checkbox checked={draft.upscaleParts} onChange={(e) => patch({ upscaleParts: e.target.checked })}>
-                    拆切后放大到单张原尺寸
+                    拆切后放大到整张图的长边
                   </Checkbox>
                 </Form.Item>
               </Section>

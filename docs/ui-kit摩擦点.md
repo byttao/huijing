@@ -51,3 +51,11 @@
 5. **行内操作的二级菜单**：多合一时「继续修改」要选具体哪一张，只能在行尾图标按钮上套 antd `Dropdown`；kit 对行尾操作的数量、溢出（「更多」菜单）没有约定，`FileRow.trailing` 只是个槽。
 6. **说明文字的位置**：「合图使用更高一档分辨率（可能影响单价）」「比例为自动时不能多合一」这类依赖其他参数的提示，只能塞进 `Form.Item extra`；kit 的右栏没有「参数提示 / 警示」的样式约定（`Alert` 在 300px 宽的右栏里太重）。
 7. **品牌与图标流程**：kit 只管界面，`brand.mark` 之外没提应用图标；这次发现 `qlmanage` 渲染 SVG 会垫白底导致图标四角不透明，改用 AppKit 渲染并写了逐尺寸读 alpha 的校验脚本（`scripts/icon/`）。若 kit 定位是「Tauri 桌面工具套件」，可以附带图标生成 / 校验脚本与 macOS 留边规范。
+
+## 七、第三轮（序号、跳转、品牌图标）新增
+
+1. **`AppShell` 的 `brand.mark` 只适合单色字形**：mark 被放进 40px 的反色块（`bg-sidebar-active-text text-sidebar`），想直接显示彩色应用图标时色块会从透明圆角处露出来。没改 kit，只能把图标画成 42px 略大于色块、把色块盖住（`src/components/BrandMark.tsx`）。建议 `brand` 增加 `icon`（原样显示图片、不套色块）或 `markVariant="plain"`。
+2. **列表行的定位 / 高亮没有约定**：「改自 #7」要滚动到原记录并闪一下，kit 没有「定位高亮」的样式或时长约定，只能用 `bg-primary-bg` + `duration-slow` 自写；深色下 `primary-bg` 很暗，高亮不太显眼。
+3. **可点击的 Tag**：规则 1 不让自写按钮，但「改自 #7」这种既是状态又能点的标签，antd `Tag` 本身不是按钮，只能补 `role="button"`、`tabIndex`、键盘事件；kit 没给「可点击标签」的写法。
+4. **图片上的角标**：图库瓦片左上角的编号要在任意图片上都看得清，`bg-spotlight` 在深色主题下是浅底（配白字对比不够），最后改用 `bg-container` + 描边；kit 没有「图片上的叠加文字」用哪个 token 的说明。
+5. **没有全局错误边界**：渲染出错时整页空白，kit 的 `ThemeProvider` / `AppShell` 不带错误兜底，这轮在入口自加了 `ErrorBoundary`（antd `Result`）。

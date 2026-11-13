@@ -30,13 +30,17 @@ export interface TaskActions {
 interface TaskRowProps extends TaskActions {
   task: Task;
   parent?: Task;
+  /** 被「改自」跳转定位时高亮闪一下 */
+  highlighted?: boolean;
+  /** 点击「改自 #7」：滚动到原记录 */
+  onJumpParent?: (task: Task) => void;
 }
 
 /**
  * 队列行：缩略图 + 提示词 + 模型 / 模式 / 参数 + 状态（带图标的 Tag）+ 进度 / 报错 + 操作。
  * ui-kit 的 FileRow 只有 32px 单行文字，放不下缩略图与多行信息，这里按它的样式约定自写一行。
  */
-export function TaskRow({ task, parent, onEdit, onRetry, onRetryDownload, onCancel, onDelete, onReveal }: TaskRowProps) {
+export function TaskRow({ task, parent, highlighted, onJumpParent, onEdit, onRetry, onRetryDownload, onCancel, onDelete, onReveal }: TaskRowProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const failed = task.status === "failed" || task.status === "download_failed";
   const done = task.status === "succeeded";
@@ -47,7 +51,14 @@ export function TaskRow({ task, parent, onEdit, onRetry, onRetryDownload, onCanc
   const cover = task.compositeFile ?? file;
 
   return (
-    <li className={cn("flex items-start gap-3 border-b px-3 py-2.5 last:border-b-0", failed && FILE_ROW_ERROR_CLASS)}>
+    <li
+      id={`task-row-${task.id}`}
+      className={cn(
+        "flex items-start gap-3 border-b px-3 py-2.5 transition-colors duration-slow last:border-b-0",
+        failed && FILE_ROW_ERROR_CLASS,
+        highlighted && "bg-primary-bg"
+      )}
+    >
       <Thumb
         path={cover}
         size="md"
@@ -58,32 +69,32 @@ export function TaskRow({ task, parent, onEdit, onRetry, onRetryDownload, onCanc
       />
 
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <Typography.Text strong ellipsis={{ tooltip: task.prompt }} className={cn(failed && "text-inherit")}>
-          {task.prompt}
-        </Typography.Text>
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className={cn("shrink-0 font-strong tabular-nums", failed ? "text-inherit" : "text-primary-text")}>#{task.number}</span>
+          <Typography.Text strong ellipsis={{ tooltip: task.prompt }} className={cn("min-w-0", failed && "text-inherit")}>
+            {task.prompt}
+          </Typography.Text>
+        </div>
         <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
           <StatusTag task={task} />
           <Tag variant="filled">{modelLabel(task.model)}</Tag>
           <Tag variant="filled">{modeLabel(task.mode)}</Tag>
           {task.count > 1 && (
-            <Tooltip title={task.grid ? `${task.grid.cols} 列 × ${task.grid.rows} 行宫格，合成比例 ${task.grid.requestRatio}，1 次请求` : undefined}>
+            <Tooltip
+              title={
+                task.grid
+                  ? `整张 ${task.grid.requestRatio === "auto" ? "自动比例" : task.grid.requestRatio}，${task.grid.cols} 列 × ${task.grid.rows} 行等分${task.grid.cellRatio ? `，每张约 ${task.grid.cellRatio}` : ""}，1 次请求`
+                  : undefined
+              }
+            >
               <Tag icon={<AppstoreOutlined />} variant="outlined">
                 {task.count} 合 1
               </Tag>
             </Tooltip>
           )}
-          {parent && (
-            <Tooltip title={`改自：${parent.prompt}`}>
-              <Tag icon={<BranchesOutlined />} variant="outlined">
-                改自「{shortPrompt(parent.prompt, 10)}」
-              </Tag>
-            </Tooltip>
-          )}
-          {!parent && task.parentId && (
-            <Tag icon={<BranchesOutlined />} variant="outlined">改自已删除的任务</Tag>
-          )}
+          {task.parentId && <ParentTag task={task} parent={parent} onJump={onJumpParent} />}
           <span className={cn("text-sm", failed ? "text-inherit" : "text-text-tertiary")}>
-            {paramsSummary(task.model, task.params)} · #{task.seq} · {formatTime(task.createdAt)}
+            {paramsSummary(task.model, task.params)} · {formatTime(task.createdAt)}
           </span>
         </div>
         {task.status === "generating" && task.remoteId && (
@@ -95,7 +106,14 @@ export function TaskRow({ task, parent, onEdit, onRetry, onRetryDownload, onCanc
           <Image.PreviewGroup>
             <div className="flex gap-1.5">
               {parts.map((p, i) => (
-                <Thumb key={p} path={p} size="sm" alt={`第 ${i + 1} 张`} />
+                <Tooltip key={p} title={`#${task.number}-${i + 1}`}>
+                  <span className="flex flex-col items-center gap-0.5">
+                    <Thumb path={p} size="sm" alt={`#${task.number}-${i + 1}`} />
+                    <span className="text-sm tabular-nums text-text-tertiary">
+                      #{task.number}-{i + 1}
+                    </span>
+                  </span>
+                </Tooltip>
               ))}
             </div>
           </Image.PreviewGroup>
@@ -117,7 +135,7 @@ export function TaskRow({ task, parent, onEdit, onRetry, onRetryDownload, onCanc
           <Dropdown
             trigger={["click"]}
             menu={{
-              items: parts.map((p, i) => ({ key: p, label: `继续修改第 ${i + 1} 张` })),
+              items: parts.map((p, i) => ({ key: p, label: `继续修改 #${task.number}-${i + 1}` })),
               onClick: ({ key }) => onEdit(task, key),
             }}
           >
@@ -151,5 +169,40 @@ export function TaskRow({ task, parent, onEdit, onRetry, onRetryDownload, onCanc
         </Tooltip>
       </div>
     </li>
+  );
+}
+
+/** 「改自 #7」/「改自 #7-2」：可点击跳到原记录；原记录已删除时置灰 */
+function ParentTag({ task, parent, onJump }: { task: Task; parent?: Task; onJump?: (task: Task) => void }) {
+  const number = parent?.number ?? task.parentNumber;
+  const label = number ? `改自 #${number}${task.parentPart ? `-${task.parentPart}` : ""}` : "改自已删除的记录";
+  if (!parent) {
+    return (
+      <Tooltip title="原记录已删除">
+        <Tag icon={<BranchesOutlined />} variant="filled" className="text-text-tertiary">
+          {label}
+        </Tag>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tooltip title={`${parent.inQueue ? "定位到" : "在图库中查看"}原记录：${shortPrompt(parent.prompt, 24)}`}>
+      <Tag
+        icon={<BranchesOutlined />}
+        variant="outlined"
+        role="button"
+        tabIndex={0}
+        className="cursor-pointer transition-colors duration-fast hover:border-primary hover:text-primary-text"
+        onClick={() => onJump?.(task)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onJump?.(task);
+          }
+        }}
+      >
+        {label}
+      </Tag>
+    </Tooltip>
   );
 }

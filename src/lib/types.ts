@@ -22,6 +22,8 @@ export interface GenParams {
   outputFormat: string;
   /** Nano 多合一时用高一档分辨率请求 */
   higherRes: boolean;
+  /** 多合一 2 / 3 张的排法："row" 横排、"column" 竖排，空为默认 */
+  layout: string;
 }
 
 /** 宫格方案（与 Rust 端 grid::GridPlan 一致） */
@@ -29,13 +31,16 @@ export interface GridPlan {
   count: number;
   cols: number;
   rows: number;
-  cellRatio: string;
+  /** 2 / 3 张时 "row" 横排、"column" 竖排；单张与 4 张为空 */
+  orientation: string;
+  /** 整张图（实际请求）的比例，就是所选比例 */
   requestRatio: string;
-  exact: boolean;
+  /** 拆切后每张的比例（约分）；比例为自动时为空 */
+  cellRatio: string;
   requestTier: string;
+  tier: string;
   requestSize: [number, number];
   cellSize: [number, number];
-  singleSize: [number, number];
   outputSize: [number, number];
   upscale: boolean;
   estimated: boolean;
@@ -70,6 +75,11 @@ export interface Task {
   /** 多合一的合成原图；files 是拆切后的各张 */
   compositeFile: string | null;
   notice: string | null;
+  /** 持久自增序号 #12 */
+  number: number;
+  /** 改自的原记录序号与切片号（#7-2） */
+  parentNumber: number | null;
+  parentPart: number | null;
 }
 
 export type ProxyMode = "none" | "system" | "custom";

@@ -46,6 +46,8 @@ pub struct GenParams {
     pub output_format: String,
     /// Nano 多合一时用高一档分辨率请求（如 1K × 4 张用 2K 请求，切出来是原生 1K）
     pub higher_res: bool,
+    /// 多合一 2 / 3 张的排法："row" 横排、"column" 竖排，空为默认（每格更接近方形的一种）
+    pub layout: String,
 }
 
 impl Default for GenParams {
@@ -56,6 +58,7 @@ impl Default for GenParams {
             background: String::new(),
             output_format: "png".into(),
             higher_res: false,
+            layout: String::new(),
         }
     }
 }
