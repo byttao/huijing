@@ -17,8 +17,8 @@ import {
 } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { LogViewer, Page, Panel, ThemePicker, Workspace, useLogger, useTheme, type ThemeMode } from "../ui-kit";
-import { BrandMark } from "../components/BrandMark";
+import { LogViewer, Page, Panel, SettingsScroll, SettingsSection, ThemePicker, Workspace, useLogger, useTheme, type ThemeMode } from "../ui-kit";
+import brandMark from "../assets/brand-mark.png";
 import { api, errorText } from "../lib/api";
 import { BACKGROUNDS, IMAGE_SIZES, MODELS, OUTPUT_FORMATS } from "../lib/options";
 import { gptRatioOptions, nanoRatioOptions } from "../components/Ratio";
@@ -49,20 +49,8 @@ interface SettingsPageProps {
   onSaved: (view: SettingsView) => void;
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="flex flex-col gap-3 border-b pb-5 last:border-b-0 last:pb-0">
-      <Typography.Title level={5} className="m-0">
-        {title}
-      </Typography.Title>
-      {children}
-    </section>
-  );
-}
-
 export function SettingsPage({ view, onSaved }: SettingsPageProps) {
-  // 变量名用 toast：App.useApp() 的 message，与静态 message 区分（也让 AI_GUIDE 自检的字面搜索通过）
-  const { message: toast } = AntApp.useApp();
+  const { message } = AntApp.useApp();
   const { logs, log, clear } = useLogger();
   const { accent, setAccent, mode, setMode } = useTheme();
   const [draft, setDraft] = useState<Settings | null>(null);
@@ -93,10 +81,10 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
       onSaved(next);
       setDraft(next.settings);
       log("设置已保存。", "success");
-      toast.success("设置已保存");
+      message.success("设置已保存");
     } catch (err) {
       log(`保存失败：${errorText(err)}`, "error");
-      toast.error(errorText(err));
+      message.error(errorText(err));
     } finally {
       setSaving(false);
     }
@@ -108,10 +96,10 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
     try {
       const text = await api.testConnection(draft);
       log(text, "success");
-      toast.success(text);
+      message.success(text);
     } catch (err) {
       log(`测试失败：${errorText(err)}`, "error");
-      toast.error(errorText(err));
+      message.error(errorText(err));
     } finally {
       setTesting(false);
     }
@@ -130,7 +118,7 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
     try {
       await api.openFolder(shownDir);
     } catch (err) {
-      toast.error(errorText(err));
+      message.error(errorText(err));
     }
   };
 
@@ -138,7 +126,7 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
     try {
       await openUrl(WEBSITE);
     } catch (err) {
-      toast.error(errorText(err));
+      message.error(errorText(err));
     }
   };
 
@@ -151,7 +139,7 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
           <>
             <Panel title="关于绘境">
               <div className="flex items-center gap-3">
-                <BrandMark size="md" />
+                <img src={brandMark} alt="" aria-hidden className="size-10 shrink-0" />
                 <div className="min-w-0">
                   <div className="text-lg font-strong">绘境</div>
                   <div className="text-sm text-text-tertiary">AI 出图 · 文生图 / 图生图 / 继续修改</div>
@@ -187,23 +175,25 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
                 GRSAI 官网 · 模型与价格
               </Button>
             </Panel>
-            <div className="mt-auto flex flex-col gap-2">
-              {dirty && (
-                <Button type="link" size="small" icon={<RollbackOutlined />} onClick={() => setDraft(view.settings)}>
-                  放弃修改
-                </Button>
-              )}
-              <Button type="primary" block loading={saving} disabled={!dirty} onClick={save}>
-                保存设置
+          </>
+        }
+        asideFooter={
+          <>
+            {dirty && (
+              <Button type="link" size="small" icon={<RollbackOutlined />} onClick={() => setDraft(view.settings)}>
+                放弃修改
               </Button>
-            </div>
+            )}
+            <Button type="primary" block loading={saving} disabled={!dirty} onClick={save}>
+              保存设置
+            </Button>
           </>
         }
       >
         <Panel fill className="flex-1" title="设置" extra={<span className="text-sm text-text-tertiary">外观即时生效，其余点右下角「保存设置」</span>}>
-          <div className="min-h-0 flex-1 overflow-y-auto pr-2">
-            <Form layout="vertical" component="div" className="flex max-w-[640px] flex-col gap-5 [&_.ant-form-item]:mb-0">
-              <Section title="接口">
+          <SettingsScroll>
+            <Form layout="vertical" component="div" className="contents">
+              <SettingsSection title="接口">
                 <Form.Item label="API Key" extra="在 GRSAI 控制台获取；「测试连接」不会扣费">
                   <Space.Compact block>
                     <Input.Password
@@ -220,9 +210,9 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
                 <Form.Item label="节点">
                   <Radio.Group orientation="vertical" options={NODES} value={draft.node} onChange={(e) => patch({ node: e.target.value })} />
                 </Form.Item>
-              </Section>
+              </SettingsSection>
 
-              <Section title="网络代理">
+              <SettingsSection title="网络代理">
                 <Form.Item label="代理" extra="图片服务器走代理时可能握手失败，一般只给 API 请求用代理">
                   <Segmented options={PROXY_MODES} value={draft.proxy.mode} onChange={(v) => patchProxy({ mode: v as ProxyMode })} />
                 </Form.Item>
@@ -246,9 +236,9 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
                     </Checkbox>
                   </Space>
                 </Form.Item>
-              </Section>
+              </SettingsSection>
 
-              <Section title="输出">
+              <SettingsSection title="输出">
                 <Form.Item label="输出目录" extra={draft.outputDir ? undefined : "默认：图片/绘境"}>
                   <Space.Compact block>
                     <Input value={shownDir} readOnly />
@@ -266,9 +256,9 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
                 <Form.Item label="同时生成" extra="超出的任务排队等待，1–5">
                   <InputNumber min={1} max={5} precision={0} value={draft.concurrency} onChange={(v) => patch({ concurrency: v ?? 2 })} suffix="个" />
                 </Form.Item>
-              </Section>
+              </SettingsSection>
 
-              <Section title="默认参数">
+              <SettingsSection title="默认参数">
                 <div className="grid grid-cols-2 gap-3">
                   <Form.Item label="默认模型">
                     <Select value={draft.defaultModel} onChange={(v) => patch({ defaultModel: v })} options={MODELS} />
@@ -298,41 +288,31 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
                     <Segmented block options={IMAGE_SIZES} value={draft.nanoParams.imageSize || "1K"} onChange={(v) => patchNano({ imageSize: String(v) })} />
                   </Form.Item>
                 </div>
-              </Section>
+              </SettingsSection>
 
-              <Section title="多合一">
+              <SettingsSection title="多合一">
                 <Form.Item extra="多合一按宫格等分后，每张比整张图小。开启后每张等比放大，使长边等于整张图的长边（如 16:9 整张 1376×768 的 2×2 切片 688×384 → 1376×768），用 Lanczos3 算法；关闭则保留等分后的原始像素。Nano 勾了「合图使用更高一档分辨率」时以原档位整张图的长边为准">
                   <Checkbox checked={draft.upscaleParts} onChange={(e) => patch({ upscaleParts: e.target.checked })}>
                     拆切后放大到整张图的长边
                   </Checkbox>
                 </Form.Item>
-              </Section>
+              </SettingsSection>
 
-              <Section title="外观">
+              <SettingsSection title="外观">
                 <Form.Item label="明暗">
                   <Segmented options={THEME_MODES} value={mode} onChange={(v) => setMode(v as ThemeMode)} />
                 </Form.Item>
                 <Form.Item label="主题">
                   <ThemePicker value={accent} onChange={setAccent} />
                 </Form.Item>
-              </Section>
+              </SettingsSection>
             </Form>
-          </div>
+          </SettingsScroll>
         </Panel>
       </Workspace>
 
-      <Panel
-        fill
-        title="设置日志"
-        size="small"
-        className="h-[170px] shrink-0"
-        extra={
-          <Button type="link" size="small" disabled={!logs.length} onClick={clear}>
-            清空日志
-          </Button>
-        }
-      >
-        <LogViewer logs={logs} emptyText="测试连接、保存设置的结果会显示在这里" />
+      <Panel fill title="设置日志" size="small" className="h-[170px] shrink-0">
+        <LogViewer logs={logs} onClear={clear} emptyText="测试连接、保存设置的结果会显示在这里" />
       </Panel>
     </Page>
   );

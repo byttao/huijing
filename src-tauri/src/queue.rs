@@ -1136,4 +1136,43 @@ mod tests {
             println!("{p} {:?}", image::open(&p).unwrap().dimensions());
         }
     }
+
+    /// 真实出图验证多合一（会扣费，手动运行）：与应用同一套规划 / 提示词 / 接口 / 下载 / 拆切代码。
+    /// HUIJING_KEY=… MODEL=nano-banana-2.1 RATIO=16:9 COUNT=2 LAYOUT=row PROMPT=… OUT=/tmp/x \
+    ///   cargo test real_multi -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_multi() {
+        let env = |k: &str| std::env::var(k).unwrap_or_default();
+        let model: Model = serde_json::from_str(&format!("\"{}\"", env("MODEL"))).unwrap();
+        let params = GenParams { aspect_ratio: env("RATIO"), image_size: "1K".into(), layout: env("LAYOUT"), ..GenParams::default() };
+        let plan = grid::plan(model, &params, env("COUNT").parse().unwrap(), true).unwrap();
+        println!("方案：{}×{} 整张 {} 每张约 {} 请求约 {:?}", plan.cols, plan.rows, plan.request_ratio, plan.cell_ratio, plan.request_size);
+        let task = Task { grid: Some(plan.clone()), sent_prompt: Some(grid::wrap_prompt(&env("PROMPT"), &plan)), params, model, count: plan.count, ..task() };
+        let (prompt, req_params) = request_of(&task);
+        let req = GenRequest { model, prompt, params: req_params, images: vec![] };
+        let out = PathBuf::from(env("OUT"));
+        std::fs::create_dir_all(&out).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let client = build_client(&crate::settings::ProxySettings::default(), false, API_TIMEOUT).unwrap();
+            let ctx = ApiContext { base_url: crate::settings::NODE_CN.into(), api_key: env("HUIJING_KEY"), client };
+            let started = std::time::Instant::now();
+            let urls = match api::route(&req) {
+                Route::GptSync => gpt_image::generate(&ctx, &req).await.unwrap(),
+                Route::Async(body) => {
+                    let id = async_task::submit(&ctx, &body).await.unwrap();
+                    async_task::poll(&ctx, &id, |_| {}).await.unwrap()
+                }
+            };
+            println!("生成用时 {:?}，{}", started.elapsed(), urls[0]);
+            let dest = out.join("composite-宫格.png");
+            let dl = build_client(&crate::settings::ProxySettings::default(), false, DOWNLOAD_TIMEOUT).unwrap();
+            download::download(&dl, &urls[0], &dest).await.unwrap();
+            println!("合成图 {:?}", image::open(&dest).unwrap().dimensions());
+            for p in split_composites(&[dest.to_string_lossy().to_string()], &plan, &out).unwrap() {
+                println!("{p} {:?}", image::open(&p).unwrap().dimensions());
+            }
+        });
+    }
 }

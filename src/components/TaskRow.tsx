@@ -7,15 +7,14 @@ import {
   EditOutlined,
   EyeOutlined,
   FolderOpenOutlined,
+  MoreOutlined,
   RedoOutlined,
   StopOutlined,
 } from "@ant-design/icons";
-import { Button, Dropdown, Image, Progress, Tag, Tooltip, Typography } from "antd";
-import { FILE_ROW_ERROR_CLASS, cn } from "../ui-kit";
+import { Button, Dropdown, Image, Progress, Tag, Tooltip, Typography, type MenuProps } from "antd";
+import { ListRow, StatusTag, Thumb } from "../ui-kit";
 import { formatTime, isActive, modeLabel, modelLabel, paramsSummary, shortPrompt } from "../lib/options";
 import type { Task } from "../lib/types";
-import { StatusTag } from "./StatusTag";
-import { Thumb } from "./Thumb";
 
 export interface TaskActions {
   /** file：作为参考图的那一张（多合一时是拆切后的某一张） */
@@ -30,15 +29,35 @@ export interface TaskActions {
 interface TaskRowProps extends TaskActions {
   task: Task;
   parent?: Task;
-  /** 被「改自」跳转定位时高亮闪一下 */
+  /** 被「改自」跳转定位时高亮（kit ListRow 的 highlight：主色内描边并滚到可见） */
   highlighted?: boolean;
-  /** 点击「改自 #7」：滚动到原记录 */
+  /** 点击「改自 #7」：定位到原记录 */
   onJumpParent?: (task: Task) => void;
 }
 
+/** 绘境任务状态 → kit StatusTag */
+function TaskStatus({ task }: { task: Task }) {
+  switch (task.status) {
+    case "queued":
+      return <StatusTag status="queued" />;
+    case "generating":
+      return <StatusTag status="processing">{task.remoteId ? `生成中 ${task.progress}%` : "生成中"}</StatusTag>;
+    case "downloading":
+      return <StatusTag status="processing">下载中</StatusTag>;
+    case "succeeded":
+      return <StatusTag status="success" />;
+    case "failed":
+      return <StatusTag status="error" />;
+    case "download_failed":
+      return <StatusTag status="warning">下载失败</StatusTag>;
+    case "cancelled":
+      return <StatusTag status="cancelled" />;
+  }
+}
+
 /**
- * 队列行：缩略图 + 提示词 + 模型 / 模式 / 参数 + 状态（带图标的 Tag）+ 进度 / 报错 + 操作。
- * ui-kit 的 FileRow 只有 32px 单行文字，放不下缩略图与多行信息，这里按它的样式约定自写一行。
+ * 队列行：kit ListRow（缩略图 + 序号与提示词 + 状态 / 模型 / 模式 / 参数 + 进度 / 报错 / 拆切图 + 行尾操作）。
+ * 行尾按 kit 约定最多 3 个图标按钮，其余收进「更多」，删除放最后。
  */
 export function TaskRow({ task, parent, highlighted, onJumpParent, onEdit, onRetry, onRetryDownload, onCancel, onDelete, onReveal }: TaskRowProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -50,33 +69,47 @@ export function TaskRow({ task, parent, highlighted, onJumpParent, onEdit, onRet
   // 左侧大缩略图：多合一时显示合成原图，下面一排是拆切后的各张
   const cover = task.compositeFile ?? file;
 
-  return (
-    <li
-      id={`task-row-${task.id}`}
-      className={cn(
-        "flex items-start gap-3 border-b px-3 py-2.5 transition-colors duration-slow last:border-b-0",
-        failed && FILE_ROW_ERROR_CLASS,
-        highlighted && "bg-primary-bg"
-      )}
-    >
-      <Thumb
-        path={cover}
-        size="md"
-        loading={task.status === "generating" || task.status === "downloading"}
-        open={previewOpen}
-        onOpenChange={setPreviewOpen}
-        alt={task.prompt}
-      />
+  const more: NonNullable<MenuProps["items"]> = [
+    ...(done && file ? [{ key: "reveal", icon: <FolderOpenOutlined />, label: "打开所在文件夹" }] : []),
+    ...(task.status === "download_failed" ? [{ key: "download", icon: <CloudDownloadOutlined />, label: "仅重试下载（不扣费）" }] : []),
+    ...(task.status === "download_failed" ? [{ key: "retry", icon: <RedoOutlined />, label: "重新生成（会再次扣费）" }] : []),
+    { type: "divider" as const },
+    { key: "delete", icon: <DeleteOutlined />, label: "删除记录…", danger: true },
+  ];
+  const onMore: MenuProps["onClick"] = ({ key }) => {
+    if (key === "reveal") onReveal(task);
+    else if (key === "download") onRetryDownload(task);
+    else if (key === "retry") onRetry(task);
+    else if (key === "delete") onDelete(task);
+  };
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <span className={cn("shrink-0 font-strong tabular-nums", failed ? "text-inherit" : "text-primary-text")}>#{task.number}</span>
-          <Typography.Text strong ellipsis={{ tooltip: task.prompt }} className={cn("min-w-0", failed && "text-inherit")}>
+  return (
+    <ListRow
+      id={`task-row-${task.id}`}
+      status={failed ? "error" : undefined}
+      failedLabel={false}
+      highlight={highlighted}
+      leading={
+        <Thumb
+          path={cover}
+          size="md"
+          loading={task.status === "generating" || task.status === "downloading"}
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          alt={task.prompt}
+        />
+      }
+      title={
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="shrink-0 font-strong tabular-nums text-primary-text">#{task.number}</span>
+          <Typography.Text strong ellipsis={{ tooltip: task.prompt }} className="min-w-0">
             {task.prompt}
           </Typography.Text>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
-          <StatusTag task={task} />
+        </span>
+      }
+      meta={
+        <>
+          <TaskStatus task={task} />
           <Tag variant="filled">{modelLabel(task.model)}</Tag>
           <Tag variant="filled">{modeLabel(task.mode)}</Tag>
           {task.count > 1 && (
@@ -93,82 +126,88 @@ export function TaskRow({ task, parent, highlighted, onJumpParent, onEdit, onRet
             </Tooltip>
           )}
           {task.parentId && <ParentTag task={task} parent={parent} onJump={onJumpParent} />}
-          <span className={cn("text-sm", failed ? "text-inherit" : "text-text-tertiary")}>
+          <span>
             {paramsSummary(task.model, task.params)} · {formatTime(task.createdAt)}
           </span>
-        </div>
-        {task.status === "generating" && task.remoteId && (
-          <Progress percent={task.progress} size="small" showInfo={false} status="active" className="m-0 max-w-[320px]" />
-        )}
-        {task.error && <span className="text-sm">{task.error}</span>}
-        {task.notice && <span className="text-sm text-warning-text">{task.notice}</span>}
-        {parts.length > 0 && (
-          <Image.PreviewGroup>
-            <div className="flex gap-1.5">
-              {parts.map((p, i) => (
-                <Tooltip key={p} title={`#${task.number}-${i + 1}`}>
-                  <span className="flex flex-col items-center gap-0.5">
-                    <Thumb path={p} size="sm" alt={`#${task.number}-${i + 1}`} />
-                    <span className="text-sm tabular-nums text-text-tertiary">
-                      #{task.number}-{i + 1}
-                    </span>
-                  </span>
+        </>
+      }
+      extra={
+        <>
+          {task.status === "generating" && task.remoteId && (
+            <Progress percent={task.progress} size="small" showInfo={false} status="active" className="m-0 max-w-[320px]" />
+          )}
+          {task.error && <Typography.Text className="text-sm">{task.error}</Typography.Text>}
+          {task.notice && <Typography.Text type="warning" className="text-sm">{task.notice}</Typography.Text>}
+          {parts.length > 0 && <PartStrip number={task.number} parts={parts} />}
+        </>
+      }
+      trailing={
+        <>
+          {done && file && (
+            <Tooltip title="预览">
+              <Button type="text" size="small" icon={<EyeOutlined />} aria-label="预览" onClick={() => setPreviewOpen(true)} />
+            </Tooltip>
+          )}
+          {done &&
+            file &&
+            (parts.length > 0 ? (
+              <Dropdown
+                trigger={["click"]}
+                menu={{ items: parts.map((p, i) => ({ key: p, label: `继续修改 #${task.number}-${i + 1}` })), onClick: ({ key }) => onEdit(task, key) }}
+              >
+                <Tooltip title="继续修改（选一张）">
+                  <Button type="text" size="small" icon={<EditOutlined />} aria-label="继续修改" />
                 </Tooltip>
-              ))}
-            </div>
-          </Image.PreviewGroup>
-        )}
-      </div>
-
-      <div className="flex shrink-0 items-center">
-        {done && file && (
-          <Tooltip title="预览">
-            <Button type="text" size="small" icon={<EyeOutlined />} aria-label="预览" onClick={() => setPreviewOpen(true)} />
-          </Tooltip>
-        )}
-        {done && file && parts.length === 0 && (
-          <Tooltip title="继续修改">
-            <Button type="text" size="small" icon={<EditOutlined />} aria-label="继续修改" onClick={() => onEdit(task)} />
-          </Tooltip>
-        )}
-        {done && parts.length > 0 && (
-          <Dropdown
-            trigger={["click"]}
-            menu={{
-              items: parts.map((p, i) => ({ key: p, label: `继续修改 #${task.number}-${i + 1}` })),
-              onClick: ({ key }) => onEdit(task, key),
-            }}
-          >
-            <Tooltip title="继续修改（选一张）">
-              <Button type="text" size="small" icon={<EditOutlined />} aria-label="继续修改" />
+              </Dropdown>
+            ) : (
+              <Tooltip title="继续修改">
+                <Button type="text" size="small" icon={<EditOutlined />} aria-label="继续修改" onClick={() => onEdit(task)} />
+              </Tooltip>
+            ))}
+          {(task.status === "failed" || task.status === "cancelled") && (
+            <Tooltip title="重试">
+              <Button type="text" size="small" icon={<RedoOutlined />} aria-label="重试" onClick={() => onRetry(task)} />
+            </Tooltip>
+          )}
+          {task.status === "download_failed" && (
+            <Tooltip title="仅重试下载（不重新生成，不扣费）">
+              <Button type="text" size="small" icon={<CloudDownloadOutlined />} aria-label="重试下载" onClick={() => onRetryDownload(task)} />
+            </Tooltip>
+          )}
+          {active && (
+            <Tooltip title={task.status === "queued" ? "取消排队" : "取消（丢弃结果）"}>
+              <Button type="text" size="small" icon={<StopOutlined />} aria-label="取消" onClick={() => onCancel(task)} />
+            </Tooltip>
+          )}
+          <Dropdown trigger={["click"]} menu={{ items: more, onClick: onMore }}>
+            <Tooltip title="更多">
+              <Button type="text" size="small" icon={<MoreOutlined />} aria-label="更多操作" />
             </Tooltip>
           </Dropdown>
-        )}
-        {task.status === "download_failed" && (
-          <Tooltip title="仅重试下载（不重新生成，不扣费）">
-            <Button type="text" size="small" icon={<CloudDownloadOutlined />} aria-label="重试下载" onClick={() => onRetryDownload(task)} />
-          </Tooltip>
-        )}
-        {(failed || task.status === "cancelled") && (
-          <Tooltip title={task.status === "download_failed" ? "重新生成（会再次扣费）" : "重试"}>
-            <Button type="text" size="small" icon={<RedoOutlined />} aria-label="重试" onClick={() => onRetry(task)} />
-          </Tooltip>
-        )}
-        {done && file && (
-          <Tooltip title="打开所在文件夹">
-            <Button type="text" size="small" icon={<FolderOpenOutlined />} aria-label="打开所在文件夹" onClick={() => onReveal(task)} />
-          </Tooltip>
-        )}
-        {active && (
-          <Tooltip title={task.status === "queued" ? "取消排队" : "取消（丢弃结果）"}>
-            <Button type="text" size="small" icon={<StopOutlined />} aria-label="取消" onClick={() => onCancel(task)} />
-          </Tooltip>
-        )}
-        <Tooltip title="删除记录…">
-          <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label="删除记录" onClick={() => onDelete(task)} />
-        </Tooltip>
+        </>
+      }
+    />
+  );
+}
+
+/**
+ * 拆切后各张：kit Thumb + 每张下面写编号 #12-1。
+ * 没用 kit 的 ThumbStrip：它没有「图下说明文字」槽，只能悬停看名字，而切片编号需要常显。
+ */
+function PartStrip({ number, parts }: { number: number; parts: string[] }) {
+  return (
+    <Image.PreviewGroup>
+      <div className="flex flex-wrap gap-1.5">
+        {parts.map((p, i) => (
+          <span key={p} className="flex flex-col items-center gap-0.5">
+            <Thumb path={p} size="sm" alt={`#${number}-${i + 1}`} />
+            <span className="text-sm tabular-nums text-text-tertiary">
+              #{number}-{i + 1}
+            </span>
+          </span>
+        ))}
       </div>
-    </li>
+    </Image.PreviewGroup>
   );
 }
 

@@ -1,9 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppstoreOutlined, CopyOutlined, DeleteOutlined, EyeOutlined, FolderOpenOutlined, PictureOutlined } from "@ant-design/icons";
-import { App as AntApp, Button, Descriptions, Empty, Image, Segmented, Typography } from "antd";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { ListWell, LogViewer, Page, Panel, Workspace, cn, fileName, useLogger } from "../ui-kit";
-import { Thumb } from "../components/Thumb";
+import { App as AntApp, Button, Descriptions, Segmented, Typography } from "antd";
+import { EmptyState, ImageGrid, ListWell, LogViewer, Page, Panel, Thumb, Workspace, fileName, useLogger } from "../ui-kit";
 import { api, errorText } from "../lib/api";
 import { formatTime, modeLabel, modelLabel, paramsSummary, shortPrompt, taskNo } from "../lib/options";
 import type { ModelId, Task } from "../lib/types";
@@ -29,12 +27,12 @@ interface GalleryPageProps {
 }
 
 export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
-  // 变量名用 toast：App.useApp() 的 message，与静态 message 区分（也让 AI_GUIDE 自检的字面搜索通过）
-  const { message: toast, modal } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
   const { logs, log, clear } = useLogger();
   const [filter, setFilter] = useState<Filter>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ open: boolean; current: number }>({ open: false, current: 0 });
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   const items = useMemo<GalleryItem[]>(
     () =>
@@ -54,7 +52,11 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
     if (!task || !key) return false;
     setFilter("all");
     setSelectedKey(key);
-    window.setTimeout(() => document.getElementById(`tile-${key}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    // ImageGrid 不会把选中项滚到可见，这里按选中态找到瓦片再滚动
+    window.setTimeout(
+      () => gridRef.current?.querySelector('[aria-pressed="true"]')?.scrollIntoView({ behavior: "smooth", block: "center" }),
+      60
+    );
     return true;
   };
   useEffect(() => {
@@ -69,7 +71,7 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
 
   const openPreview = (key: string) => {
     const index = items.findIndex((i) => i.key === key);
-    if (index >= 0) setPreview({ open: true, current: index });
+    if (index >= 0) setPreviewIndex(index);
   };
 
   const reveal = async (item: GalleryItem) => {
@@ -78,17 +80,17 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
       log(`已在文件管理器中显示：${fileName(item.file)}`);
     } catch (err) {
       log(`打开文件夹失败：${errorText(err)}`, "error");
-      toast.error(errorText(err));
+      message.error(errorText(err));
     }
   };
 
   const copyPrompt = async (task: Task) => {
     try {
       await navigator.clipboard.writeText(task.prompt);
-      toast.success("已复制提示词");
+      message.success("已复制提示词");
       log(`已复制提示词：「${shortPrompt(task.prompt, 30)}」`, "success");
     } catch (err) {
-      toast.error(`复制失败：${errorText(err)}`);
+      message.error(`复制失败：${errorText(err)}`);
     }
   };
 
@@ -103,7 +105,7 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
           await api.remove([task.id]);
           log(`已删除记录：「${shortPrompt(task.prompt)}」`, "warning");
         } catch (err) {
-          toast.error(errorText(err));
+          message.error(errorText(err));
         }
       },
     });
@@ -118,7 +120,7 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
             <Panel fill title="图片信息" className="min-h-0 flex-1">
               {selected ? (
                 <div className="-mr-2 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-2">
-                  <Thumb path={selected.file} size="lg" alt={selected.task.prompt} preview={false} />
+                  <Thumb path={selected.file} size="fill" fit="contain" alt={selected.task.prompt} preview={false} />
                   <Typography.Paragraph ellipsis={{ rows: 4, expandable: "collapsible" }} className="m-0">
                     {selected.task.prompt}
                   </Typography.Paragraph>
@@ -189,15 +191,15 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
                   </div>
                 </div>
               ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择一张图片查看详情" />
+                <EmptyState size="small" icon={<PictureOutlined />} description="选择一张图片查看详情" />
               )}
             </Panel>
-            <div className="shrink-0">
-              <Button type="primary" block disabled={!selected} onClick={() => selected && onEdit(selected.task, selected.file)}>
-                继续修改 · 这张
-              </Button>
-            </div>
           </>
+        }
+        asideFooter={
+          <Button type="primary" block disabled={!selected} onClick={() => selected && onEdit(selected.task, selected.file)}>
+            继续修改 · 这张
+          </Button>
         }
       >
         <Panel
@@ -206,68 +208,33 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
           title={`图库 · ${items.length} 张`}
           extra={<Segmented size="small" options={FILTERS} value={filter} onChange={(v) => setFilter(v as Filter)} />}
         >
-          <ListWell className="p-3">
+          <ListWell ref={gridRef} className="p-3">
             {items.length === 0 ? (
-              <Empty
-                image={<PictureOutlined className="text-h1 text-text-tertiary" />}
-                description={filter === "all" ? "还没有已完成的图片，出图完成后会出现在这里" : "这个模型还没有已完成的图片"}
-                className="py-12"
+              <EmptyState
+                icon={<PictureOutlined />}
+                title={filter === "all" ? "还没有已完成的图片" : "这个模型还没有已完成的图片"}
+                description="出图完成后会出现在这里；多合一拆切后的每一张都会单独列出"
               />
             ) : (
-              <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-3 p-0">
-                {items.map((item) => {
-                  const isSelected = selected?.key === item.key;
-                  return (
-                    <li key={item.key} id={`tile-${item.key}`} className="relative">
-                      <button
-                        type="button"
-                        aria-pressed={isSelected}
-                        title={`${taskNo(item.task, item.file)} ${item.task.prompt}\n双击查看大图`}
-                        onClick={() => setSelectedKey(item.key)}
-                        onDoubleClick={() => openPreview(item.key)}
-                        className={cn(
-                          "block aspect-square w-full overflow-hidden rounded-lg border-2 bg-fill-alter p-0 transition-colors duration-fast",
-                          isSelected ? "border-primary" : "border-transparent hover:border-primary-border-hover"
-                        )}
-                      >
-                        <img src={convertFileSrc(item.file)} alt={item.task.prompt} loading="lazy" className="size-full object-cover" />
-                      </button>
-                      <span className="pointer-events-none absolute left-1.5 top-1.5 rounded-sm border bg-container px-1 text-sm tabular-nums text-text-secondary">
-                        {taskNo(item.task, item.file)}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
+              <ImageGrid
+                items={items.map((i) => ({
+                  key: i.key,
+                  path: i.file,
+                  alt: `${taskNo(i.task, i.file)} ${i.task.prompt}`,
+                  badge: <span className="rounded-sm border bg-container px-1 text-sm tabular-nums text-text-secondary">{taskNo(i.task, i.file)}</span>,
+                }))}
+                selectedKey={selected?.key}
+                onSelect={setSelectedKey}
+                previewIndex={previewIndex}
+                onPreviewIndexChange={setPreviewIndex}
+              />
             )}
           </ListWell>
-          <Image.PreviewGroup
-            items={items.map((i) => convertFileSrc(i.file))}
-            preview={{
-              open: preview.open,
-              current: preview.current,
-              onOpenChange: (open) => setPreview((p) => ({ ...p, open })),
-              onChange: (current) => {
-                setPreview((p) => ({ ...p, current }));
-                setSelectedKey(items[current]?.key ?? null);
-              },
-            }}
-          />
         </Panel>
       </Workspace>
 
-      <Panel
-        fill
-        title="图库日志"
-        size="small"
-        className="h-[170px] shrink-0"
-        extra={
-          <Button type="link" size="small" disabled={!logs.length} onClick={clear}>
-            清空日志
-          </Button>
-        }
-      >
-        <LogViewer logs={logs} emptyText="在这里查看复制、打开文件夹等操作记录" />
+      <Panel fill title="图库日志" size="small" className="h-[170px] shrink-0">
+        <LogViewer logs={logs} onClear={clear} emptyText="在这里查看复制、打开文件夹等操作记录" />
       </Panel>
     </Page>
   );

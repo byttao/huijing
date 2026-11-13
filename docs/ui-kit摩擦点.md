@@ -59,3 +59,16 @@
 3. **可点击的 Tag**：规则 1 不让自写按钮，但「改自 #7」这种既是状态又能点的标签，antd `Tag` 本身不是按钮，只能补 `role="button"`、`tabIndex`、键盘事件；kit 没给「可点击标签」的写法。
 4. **图片上的角标**：图库瓦片左上角的编号要在任意图片上都看得清，`bg-spotlight` 在深色主题下是浅底（配白字对比不够），最后改用 `bg-container` + 描边；kit 没有「图片上的叠加文字」用哪个 token 的说明。
 5. **没有全局错误边界**：渲染出错时整页空白，kit 的 `ThemeProvider` / `AppShell` 不带错误兜底，这轮在入口自加了 `ErrorBoundary`（antd `Result`）。
+
+## 八、升级到 1.3.0 时新发现
+
+升级本身顺利：rsync 覆盖后旧代码不改也能编译（没有删除 / 改名导出），深色主区按主题着色已修好（森翠深绿、马卡龙暗紫褐），`antd lint` 与新版自检全过。替换组件时遇到的问题：
+
+1. **`ThumbStrip` 没有「图下说明」槽**：多合一切片要常显编号 #12-1，`ThumbStrip` 只有悬停 `showName`，所以队列行的切片条仍自写（`TaskRow.tsx` 的 `PartStrip`，内部用 kit `Thumb`）。建议 `ThumbItem` 加 `caption`。
+2. **`ImageGrid` 不会把选中项滚到可见**：外部改了 `selectedKey`（如「改自 #7」跳到图库定位）后，瓦片不在可视区就看不到；瓦片也没有 id / ref。只好在外层 `ListWell` 上按 `[aria-pressed="true"]` 查找再 `scrollIntoView`。建议选中变化时自动 `scrollIntoView({ block: "nearest" })`，或提供 `scrollToSelected`。
+3. **`ListRow` 的 `highlight` 是常驻状态，没有「闪一下」的约定**：页面得自己管定时器（绘境 2.5 秒后取消）。建议给个 `highlight="flash"` 或在文档里写明推荐时长。高亮本身（主色 2px 内描边）在深色下足够显眼，比 1.2 时自写的 `bg-primary-bg` 好。
+4. **主题受控要把设置提到 `ThemeProvider` 之上**：读设置、写回设置都得在 `ThemeProvider` 外面做，而那里拿不到 `App.useApp()`（`message` 在 `ThemeProvider` 里面），读设置失败只能把错误传进 `App` 再提示。建议文档给出「读设置 → 受控主题」的完整入口写法（含错误提示）。
+5. **`useTaskEvents` 在非 Tauri 环境返回空列表**：这对 demo 友好，但用 mock 后端做页面测试时必须伪造 `window.isTauri = true`，否则列表永远是空的。建议加 `enabled` 选项或允许传入自定义 `listen`。
+6. **`Thumb` 的 antd `Image` 带 `role="button"`**：`ListRow` 里同时有可点击的 Tag（`role="button"`）时，按 role 选元素会先选到缩略图；不算 bug，但「可点击标签」仍没有 kit 写法（见七·3）。
+7. **深色下 `Descriptions` 里带 `copyable` 的长路径偶尔不省略**：设置页「数据目录」在一次离屏截图里没有显示省略号，而是在单词中间折行（Applicat / ion）；浅色正常。只复现过一次，未确认是否与 kit 有关，先记下。
+8. **`RatioPreview` 的 `cellRatio` 语义随绘境改了**：1.3 的文档按「合成比例 + 每格裁切」写（第二轮旧逻辑），绘境第三轮起整张比例不变、只等分，所以不传 `cellRatio`，每张比例写在 `caption` 里。若 kit 想覆盖「等分拆切」这类用法，可以加一个「每格比例」标注而不是裁切框。

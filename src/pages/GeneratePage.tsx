@@ -1,35 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ClearOutlined, PictureOutlined, SettingOutlined } from "@ant-design/icons";
-import { Alert, App as AntApp, Button, Checkbox, Empty, Form, Input, Segmented, Select, Typography } from "antd";
-import { listen } from "@tauri-apps/api/event";
+import { ClearOutlined, KeyOutlined, PictureOutlined, SettingOutlined } from "@ant-design/icons";
+import { Alert, App as AntApp, Button, Checkbox, Form, Input, Segmented, Select, Typography } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   DropZone,
+  EmptyState,
+  FieldHint,
   IMAGE_EXTENSIONS,
   ListWell,
   LogViewer,
   Page,
   Panel,
+  RatioPreview,
+  SettingsScroll,
+  Thumb,
+  ThumbStrip,
   Workspace,
   fileName,
   useFileDrop,
   useLogger,
-  type LogLevel,
 } from "../ui-kit";
-import { GridPreview, gptRatioOptions, nanoRatioOptions } from "../components/Ratio";
-import { RefImages } from "../components/RefImages";
+import { gptRatioOptions, nanoRatioOptions } from "../components/Ratio";
 import { TaskRow } from "../components/TaskRow";
-import { Thumb } from "../components/Thumb";
 import { api, errorText } from "../lib/api";
-import {
-  BACKGROUNDS,
-  IMAGE_SIZES,
-  MODELS,
-  MODES,
-  OUTPUT_FORMATS,
-  isActive,
-  shortPrompt,
-} from "../lib/options";
+import { BACKGROUNDS, IMAGE_SIZES, MODELS, MODES, OUTPUT_FORMATS, isActive, shortPrompt, sizeText } from "../lib/options";
 import type { EditRequest, GenParams, GridPlan, Mode, ModelId, SettingsView, Task } from "../lib/types";
 
 const IS_MAC = /Mac/i.test(navigator.userAgent);
@@ -42,16 +36,16 @@ interface GeneratePageProps {
   tasksLoaded: boolean;
   settings: SettingsView | null;
   editRequest: EditRequest | null;
-  onEdit: (task: Task) => void;
+  onEdit: (task: Task, file?: string) => void;
   onGoSettings: () => void;
   /** 原记录已从队列清除（仍在图库）时，跳到图库定位 */
   onShowInGallery: (task: Task, file?: string) => void;
 }
 
 export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest, onEdit, onGoSettings, onShowInGallery }: GeneratePageProps) {
-  // 变量名用 toast：App.useApp() 的 message，与静态 message 区分（也让 AI_GUIDE 自检的字面搜索通过）
-  const { message: toast, modal } = AntApp.useApp();
-  const { logs, log, clear } = useLogger();
+  const { message, modal } = AntApp.useApp();
+  // 日志通道 generate：Rust 端的 queue-log 在 main.tsx 里写进来，页面挂载前的先缓冲
+  const { logs, log, clear } = useLogger({ channel: "generate" });
 
   const [mode, setMode] = useState<Mode>("text");
   const [model, setModel] = useState<ModelId>("nano-banana-2.1");
@@ -91,31 +85,12 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
     log(`继续修改「${shortPrompt(task.prompt)}」：已带入${which}与原参数，改好提示词后加入队列。`);
   }, [editRequest, log]);
 
-  // Rust 端队列日志
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    listen<{ level: LogLevel; message: string }>("queue-log", ({ payload }) => log(payload.message, payload.level)).then((fn) =>
-      disposed ? fn() : (unlisten = fn)
-    );
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [log]);
-
-  // 首次载入：说明历史记录与从上次继续的任务（Rust 端启动日志发出时页面还没开始监听）
+  // 首次载入时记一条摘要（恢复中断任务的详情由 Rust 端日志补上）
   const announced = useRef(false);
   useEffect(() => {
     if (!tasksLoaded || announced.current) return;
     announced.current = true;
-    if (!tasks.length) return;
-    const resumed = tasks.filter((t) => t.status === "generating" || t.status === "downloading").length;
-    const queued = tasks.filter((t) => t.status === "queued").length;
-    const parts = [`已载入 ${tasks.length} 条任务记录`];
-    if (resumed) parts.push(`${resumed} 个从上次中断处继续`);
-    if (queued) parts.push(`${queued} 个排队中`);
-    log(`${parts.join("，")}。`);
+    if (tasks.length) log(`已载入 ${tasks.length} 条任务记录。`);
   }, [tasksLoaded, tasks, log]);
 
   const addRefs = (paths: string[]) => {
@@ -123,14 +98,14 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
     if (!fresh.length) return;
     const room = MAX_REFS - refs.length;
     if (room <= 0) {
-      toast.warning(`参考图最多 ${MAX_REFS} 张`);
+      message.warning(`参考图最多 ${MAX_REFS} 张`);
       return;
     }
     const taken = fresh.slice(0, room);
     setRefs((prev) => [...prev, ...taken]);
     if (mode !== "image") setMode("image");
     log(`已添加 ${taken.length} 张参考图：${taken.map(fileName).join("、")}`);
-    if (taken.length < fresh.length) toast.warning(`参考图最多 ${MAX_REFS} 张，多出的已忽略`);
+    if (taken.length < fresh.length) message.warning(`参考图最多 ${MAX_REFS} 张，多出的已忽略`);
   };
   const { hovering } = useFileDrop(addRefs, { enabled: active });
   const browse = async () => {
@@ -178,7 +153,7 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
 
   const submit = async () => {
     if (blocker) {
-      toast.warning(blocker);
+      message.warning(blocker);
       return;
     }
     setSubmitting(true);
@@ -193,10 +168,10 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
         parentId: mode === "edit" && editSource ? editSource.task.id : null,
       });
       log(`已加入队列：「${shortPrompt(prompt.trim())}」${count > 1 ? `· ${count} 合 1（${created[0]?.grid?.cols}×${created[0]?.grid?.rows} 宫格）` : ""}`, "info");
-      toast.success(count > 1 ? `已加入队列 · ${count} 合 1（1 次请求）` : "已加入队列 · 1 张");
+      message.success(count > 1 ? `已加入队列 · ${count} 合 1（1 次请求）` : "已加入队列 · 1 张");
     } catch (err) {
       log(`加入队列失败：${errorText(err)}`, "error");
-      toast.error(errorText(err));
+      message.error(errorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -216,7 +191,7 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
       await fn();
     } catch (err) {
       log(`${label}失败：${errorText(err)}`, "error");
-      toast.error(errorText(err));
+      message.error(errorText(err));
     }
   };
 
@@ -231,10 +206,10 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
       onShowInGallery(parent, parentFile);
       return;
     }
-    document.getElementById(`task-row-${parent.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    // kit ListRow 的 highlight：主色内描边并滚到可见；保持 2.5 秒后取消
     setFlashId(parent.id);
     window.clearTimeout(flashTimer.current);
-    flashTimer.current = window.setTimeout(() => setFlashId(null), 1600);
+    flashTimer.current = window.setTimeout(() => setFlashId(null), 2500);
   };
 
   const actions = {
@@ -271,12 +246,20 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
   return (
     <Page>
       <Workspace
+        asideFooter={
+          <>
+            {blocker && hasKey && <FieldHint>{blocker}</FieldHint>}
+            <Button type="primary" block loading={submitting} disabled={!!blocker} onClick={submit}>
+              {count > 1 ? `加入队列 · ${count} 合 1` : "加入队列 · 1 张"}
+            </Button>
+          </>
+        }
         aside={
           <>
-            {/* 参数卡片内部滚动，主按钮常驻在右栏底部 */}
+            {/* 参数卡片内部滚动；主按钮在 asideFooter 常驻 */}
             <Panel fill title="出图参数" className="min-h-0 flex-1">
-              <div className="-mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
-                <Form layout="vertical" component="div" className="flex flex-col gap-3 [&_.ant-form-item]:mb-0">
+              <SettingsScroll>
+                <Form layout="vertical" component="div" className="flex flex-col gap-3">
                   <Segmented block options={MODES} value={mode} onChange={(v) => setMode(v as Mode)} />
 
                   <Form.Item label="模型">
@@ -313,7 +296,7 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                           title="拖入参考图，或点击选择"
                           hint="支持 JPG / PNG / WebP 等，长边超过 2048 会自动缩小"
                         />
-                        <RefImages paths={refs} onRemove={(p) => setRefs((prev) => prev.filter((x) => x !== p))} />
+                        <ThumbStrip items={refs} columns={4} showName onRemove={(p) => setRefs((prev) => prev.filter((x) => x !== p))} />
                       </div>
                     </Form.Item>
                   )}
@@ -330,7 +313,7 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                         </div>
                       </Form.Item>
                     ) : (
-                      <Alert type="info" showIcon title="在左侧队列或「图库」里，对已完成的图点「继续修改」。" />
+                      <FieldHint>在左侧队列或「图库」里，对已完成的图点「继续修改」。</FieldHint>
                     ))}
 
                   {model === "gpt-image-2.6" ? (
@@ -364,10 +347,13 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                   <Form.Item
                     label="张数"
                     extra={
-                      multiBlocked ??
-                      (count > 1
-                        ? `整张图仍是所选比例，一次请求画 ${count} 个方案、只扣一次费，下载后按宫格等分拆成 ${count} 张`
-                        : "选 2–4 张时在一张图里按宫格画多个方案，再等分拆切")
+                      multiBlocked ? (
+                        <FieldHint type="warning">{multiBlocked}</FieldHint>
+                      ) : count > 1 ? (
+                        `整张图仍是所选比例，一次请求画 ${count} 个方案、只扣一次费，下载后按宫格等分拆成 ${count} 张`
+                      ) : (
+                        "选 2–4 张时在一张图里按宫格画多个方案，再等分拆切"
+                      )
                     }
                   >
                     <Segmented block options={COUNTS} value={count} disabled={!!multiBlocked} onChange={(v) => setCount(Number(v))} />
@@ -388,7 +374,15 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                   )}
 
                   {model === "nano-banana-2.1" && count > 1 && (
-                    <Form.Item extra={params.imageSize === "4K" ? "已是最高档 4K，无法再升档" : "选 1K 时用 2K 请求，切出来每张像素更多、少靠放大（4 合 1 时正好是原生 1K）。高档位单价可能更高"}>
+                    <Form.Item
+                      extra={
+                        params.imageSize === "4K" ? (
+                          <FieldHint>已是最高档 4K，无法再升档</FieldHint>
+                        ) : (
+                          <FieldHint type="warning">选 1K 时用 2K 请求，切出来每张像素更多、少靠放大（4 合 1 时正好是原生 1K）。高档位单价可能更高</FieldHint>
+                        )
+                      }
+                    >
                       <Checkbox checked={params.higherRes} disabled={params.imageSize === "4K"} onChange={(e) => setParams({ higherRes: e.target.checked })}>
                         合图使用更高一档分辨率
                       </Checkbox>
@@ -396,18 +390,39 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                   )}
 
                   <Form.Item label={count > 1 ? "预览 · 宫格与尺寸" : "预览"}>
-                    <GridPreview plan={plan} error={planError} />
+                    {plan ? (
+                      <RatioPreview
+                        ratio={plan.requestRatio}
+                        cols={plan.cols}
+                        rows={plan.rows}
+                        autoText={
+                          plan.count > 1
+                            ? `比例为「自动」：由模型决定整张图的比例，按 ${plan.cols} 列 × ${plan.rows} 行等分拆切，每张比例取决于实际出图`
+                            : "比例为「自动」：由模型决定画面比例，尺寸出图后才知道"
+                        }
+                        caption={
+                          <span className="flex flex-col">
+                            <span>
+                              整张 {plan.requestRatio}
+                              {plan.requestTier ? ` · ${plan.requestTier}` : ""} · 约 {sizeText(plan.requestSize)}
+                              {plan.count > 1 && ` · ${plan.cols} 列 × ${plan.rows} 行`}
+                            </span>
+                            {plan.count > 1 && (
+                              <span className="text-text-secondary">
+                                拆切后每张约 {plan.cellRatio}（约 {sizeText(plan.cellSize)}）
+                                {plan.upscale && plan.outputSize[0] !== plan.cellSize[0] && `，放大到约 ${sizeText(plan.outputSize)}`}
+                              </span>
+                            )}
+                          </span>
+                        }
+                      />
+                    ) : (
+                      planError && <FieldHint type="warning">{planError}</FieldHint>
+                    )}
                   </Form.Item>
                 </Form>
-              </div>
+              </SettingsScroll>
             </Panel>
-
-            <div className="flex shrink-0 flex-col gap-2">
-              {blocker && hasKey && <span className="text-sm text-text-tertiary">{blocker}</span>}
-              <Button type="primary" block loading={submitting} disabled={!!blocker} onClick={submit}>
-                {count > 1 ? `加入队列 · ${count} 合 1` : "加入队列 · 1 张"}
-              </Button>
-            </div>
           </>
         }
       >
@@ -421,7 +436,7 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
             </Button>
           }
         >
-          {settings && !hasKey && (
+          {settings && !hasKey && queue.length > 0 && (
             <Alert
               type="warning"
               showIcon
@@ -436,11 +451,20 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
           )}
           <ListWell>
             {queue.length === 0 ? (
-              <Empty
-                image={<PictureOutlined className="text-h1 text-text-tertiary" />}
-                description={hasKey ? "队列是空的。在右侧写好提示词，点「加入队列」开始出图" : "填写 API Key 后即可开始出图"}
-                className="py-12"
-              />
+              settings && !hasKey ? (
+                <EmptyState
+                  icon={<KeyOutlined />}
+                  title="还没有填写 API Key"
+                  description="出图需要 GRSAI 的 API Key，填好后可点「测试连接」验证（不扣费）。"
+                  action={
+                    <Button icon={<SettingOutlined />} onClick={onGoSettings}>
+                      去设置
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState icon={<PictureOutlined />} title="队列是空的" description="在右侧写好提示词，点「加入队列」开始出图" />
+              )
             ) : (
               <ul className="m-0 list-none p-0">
                 {queue.map((t) => (
@@ -459,18 +483,8 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
         </Panel>
       </Workspace>
 
-      <Panel
-        fill
-        title="出图日志"
-        size="small"
-        className="h-[170px] shrink-0"
-        extra={
-          <Button type="link" size="small" disabled={!logs.length} onClick={clear}>
-            清空日志
-          </Button>
-        }
-      >
-        <LogViewer logs={logs} emptyText="加入队列后，生成与下载过程会显示在这里" />
+      <Panel fill title="出图日志" size="small" className="h-[170px] shrink-0">
+        <LogViewer logs={logs} onClear={clear} emptyText="加入队列后，生成与下载过程会显示在这里" />
       </Panel>
     </Page>
   );

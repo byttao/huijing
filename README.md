@@ -2,7 +2,7 @@
 
 桌面 AI 出图工具：对接 [GRSAI](https://grsai.com/zh/models) 的出图接口，支持**文生图 / 图生图 / 继续修改**三种模式，Rust 端任务队列并发出图并自动下载到本地。
 
-界面：Tauri 2 + React + TypeScript + Ant Design 6，按 [ui-kit](https://github.com/byttao/ui-kit)（v1.2.0，`src/ui-kit/`）规范搭建。后端：Rust（`src-tauri/src/`）。
+界面：Tauri 2 + React + TypeScript + Ant Design 6，按 [ui-kit](https://github.com/byttao/ui-kit)（v1.3.0，`src/ui-kit/`）规范搭建。后端：Rust（`src-tauri/src/`）。
 
 ## 功能
 
@@ -24,7 +24,7 @@
 - **多合一**（`src-tauri/src/grid.rs`、`split.rs`）
   - 所选比例就是实际请求、实际出图（整张图）的比例；多合一只是把这张图按宫格等分拆切。每格比例 = (a/cols):(b/rows)，约分后显示。4 张固定 2×2；2 张、3 张可在横排 / 竖排间切换，默认取每张更接近方形的一种（横图并排、竖图上下叠）。比例为「自动」也可以多合一，每张比例取决于实际出图。GPT 输出 GIF / SVG 时不能多合一。各比例的结果见 [docs/多合一布局表.md](docs/多合一布局表.md)。
   - 提示词自动包一层宫格指令（N 个不同方案、几列几行、每格比例约为多少、格间无边框无留白无文字）；任务同时保存原始提示词与实际发送的提示词，界面显示原始的。
-  - 拆切：按宫格等分，在每条格线附近窄带里检测整列 / 整行近似纯色的分隔线并裁掉，内部边再内缩 0.4%。不再按目标比例裁切。
+  - 拆切：按宫格等分，在每条格线附近窄带里先检测整列 / 整行近似纯色的分隔线并裁掉；没有分隔线时找相邻行 / 列差异明显最大的内容接缝（实测模型的格线可能偏离等分位置 10 像素）；内部边再内缩 0.4%。不再按目标比例裁切。
   - 「拆切后放大到整张图的长边」（设置，默认开）：每张用 [fast_image_resize](https://crates.io/crates/fast_image_resize) 的 Lanczos3（运行时自动启用 SSE4.1 / AVX2 / NEON）等比放大，使长边等于整张图的长边（以下载到的合成图为准）。参考图预压缩也用同一个缩放器。
   - Nano「合图使用更高一档分辨率」（默认关）：如 1K 档用 2K 请求，放大目标仍按原档位整张图的长边；4 合 1 时切出来正好是原生 1K。高档位单价可能更高。
   - 文件：`…_01-宫格.png`（合成原图）、`…_01-1.png` … `…_01-N.png`（拆切后）。队列行显示合成图与各张缩略图（#12-1 …）；「继续修改」可选其中任意一张。
@@ -93,6 +93,13 @@ cargo clippy --all-targets
 
 单元测试覆盖：两个模型的请求体构造与路由、响应解析与错误归类、队列状态流转与重启恢复、并发调度、文件命名与不覆盖、参考图缩放编码、设置读写、多合一布局（两个模型 × 各比例 × N=2/3/4）、提示词包装、宫格拆切（含偏移的分隔线）与 Lanczos3 缩放。
 
+真实出图验证多合一（会扣费，与应用同一套规划 / 提示词 / 接口 / 下载 / 拆切代码）：
+
+```bash
+HUIJING_KEY=sk-… MODEL=nano-banana-2.1 RATIO=16:9 COUNT=2 LAYOUT=row PROMPT="…" OUT=/tmp/multi \
+  cargo test real_multi -- --ignored --nocapture
+```
+
 用真实合成图离线验证拆切：
 
 ```bash
@@ -128,10 +135,10 @@ cp src-tauri/target/x86_64-pc-windows-msvc/release/huijing.exe "打包产物/绘
 
 ## 应用图标
 
-`src-tauri/app-icon.svg`：森翠绿圆角底板 + 米色画框山水 + 金色星光笔触，按 macOS 惯例在 1024 画布里留边（底板 824×824 居中、圆角 185），底板外透明。侧栏品牌标记（`src/components/BrandMark.tsx`）用同一图形的单色版。改完后重新生成并校验透明：
+`src-tauri/app-icon.svg`：森翠绿圆角底板 + 米色画框山水 + 金色星光笔触，按 macOS 惯例在 1024 画布里留边（底板 824×824 居中、圆角 185），底板外透明。改完后重新生成并校验透明：
 
 ```bash
-swift scripts/icon/render-svg.swift src-tauri/app-icon.svg src-tauri/app-icon.png 1024   # 渲染到透明画布（qlmanage 会垫白底，不要用）
-npx tauri icon src-tauri/app-icon.png && rm -rf src-tauri/icons/android src-tauri/icons/ios
-swift scripts/icon/check-alpha.swift src-tauri/icons/*.png src-tauri/icons/icon.ico src-tauri/icons/icon.icns   # 逐个尺寸读四角 alpha，必须为 0
+bash src/ui-kit/scripts/icon/make-icons.sh src-tauri/app-icon.svg   # AppKit 渲染透明底 → tauri icon → 逐尺寸校验四角透明
 ```
+
+侧栏品牌标记用 `src/assets/brand-mark.png`（同一图形裁到底板、去阴影，不带 macOS 留边），以 `brand.mark={{ src }}` 交给 ui-kit 的 `AppShell`。
