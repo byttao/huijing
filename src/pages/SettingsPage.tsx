@@ -20,7 +20,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { LogViewer, Page, Panel, ThemePicker, Workspace, useLogger, useTheme, type ThemeMode } from "../ui-kit";
 import { BrandMark } from "../components/BrandMark";
 import { api, errorText } from "../lib/api";
-import { BACKGROUNDS, IMAGE_SIZES, MODELS, OUTPUT_FORMATS, gptRatioOptions, nanoRatioOptions } from "../lib/options";
+import { BACKGROUNDS, IMAGE_SIZES, MODELS, OUTPUT_FORMATS } from "../lib/options";
+import { gptRatioOptions, nanoRatioOptions } from "../components/Ratio";
 import type { GenParams, ProxyMode, Settings, SettingsView } from "../lib/types";
 
 const WEBSITE = "https://grsai.com/zh/models";
@@ -38,7 +39,7 @@ const THEME_MODES = [
   { value: "dark", label: "深色" },
   { value: "system", label: "跟随系统" },
 ];
-const COUNTS = [1, 2, 3, 4].map((n) => ({ value: n, label: `${n} 张` }));
+const COUNTS = [1, 2, 3, 4].map((n) => ({ value: n, label: n === 1 ? "1 张" : `${n} 合 1` }));
 
 /** 主题字段由外观区即时保存，不进表单草稿 */
 const withoutTheme = (s: Settings) => ({ ...s, themeAccent: "", themeMode: "" });
@@ -299,6 +300,14 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
                     <Segmented block options={IMAGE_SIZES} value={draft.nanoParams.imageSize || "1K"} onChange={(v) => patchNano({ imageSize: String(v) })} />
                   </Form.Item>
                 </div>
+              </Section>
+
+              <Section title="多合一">
+                <Form.Item extra="多合一拆切后，把每张缩放到该模型单独出一张时的尺寸（Lanczos3 算法）；关闭则保留拆切出的原始尺寸">
+                  <Checkbox checked={draft.upscaleParts} onChange={(e) => patch({ upscaleParts: e.target.checked })}>
+                    拆切后放大到单张原尺寸
+                  </Checkbox>
+                </Form.Item>
               </Section>
 
               <Section title="外观">

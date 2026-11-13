@@ -10,7 +10,8 @@
   - 文生图：只写提示词。
   - 图生图：提示词 + 本地参考图（拖到窗口任意位置，或点击选择；可多张，最多 8 张）。参考图在 Rust 端读取并转 base64，长边超过 2048 先缩小。
   - 继续修改：队列或图库里任一已完成的图点「继续修改」，结果图作为参考图带入，沿用原模型与参数；新任务记录来源（`parentId`），列表里显示「改自「…」」。
-  - 张数 1–4：展开成多个独立任务，分别排队、分别计费。
+  - **多合一**（张数 2–4）：一次请求让模型在一张图里按宫格画出 N 个不同方案，只扣一次费、任务仍是 1 个；下载后在 Rust 端按宫格拆成 N 张（合成原图也保留）。三种模式都支持。详见下文「多合一」。
+  - 比例选择带预览：下拉项里每个比例有按真实宽高比画的小矩形；参数区有当前比例的预览框，多合一时画出宫格划分、合成比例、请求尺寸与拆切后每张的尺寸。
   - 提示词框里 `⌘/Ctrl + Enter` 直接加入队列。
 - **任务队列**（Rust 端，`src-tauri/src/queue.rs`）
   - 状态：排队中 / 生成中（异步任务带百分比）/ 下载中 / 已完成 / 失败 / 下载失败 / 已取消。
@@ -19,6 +20,13 @@
   - 队列与历史存在 `tasks.json`；重启后：已完成的保留；生成中的异步任务（有任务 id）继续轮询，下载中的继续下载，其余中断的标为失败可重试。
   - 成功后自动下载到输出目录，文件名 `20261113-173012_nano-banana-2.1_01.png`（时间_模型_序号），不覆盖已有文件（重名加 ` (2)`）。
   - 接口错误转成中文提示（Key 无效、余额不足、内容违规、超时、网络、结果过期…）。
+- **多合一**（`src-tauri/src/grid.rs`、`split.rs`）
+  - 布局自动计算：每格比例 = 所选比例 a:b，cols×rows 的合成比例 = (cols·a):(rows·b)；在 2×1 / 1×2、3×1 / 1×3、2×2 / 4×1 / 1×4 中选合成比例最接近该模型支持比例的一个，不精确命中时每格居中裁切。各比例的选择结果见 [docs/多合一布局表.md](docs/多合一布局表.md)。比例为「自动」或 GPT 输出 GIF / SVG 时不能多合一。
+  - 提示词自动包一层宫格指令（N 个不同方案、几列几行、每格比例、格间无边框无留白无文字）；任务同时保存原始提示词与实际发送的提示词，界面显示原始的。
+  - 拆切：按宫格等分，在每条格线附近窄带里检测整列 / 整行近似纯色的分隔线并裁掉，内部边再内缩 0.4%，最后居中裁到目标比例。
+  - 「拆切后放大到单张原尺寸」（设置，默认开）：用 [fast_image_resize](https://crates.io/crates/fast_image_resize) 的 Lanczos3（运行时自动启用 SSE4.1 / AVX2 / NEON）缩放到该模型单独出一张时的尺寸，以下载到的合成图实际像素为准。参考图预压缩也用同一个缩放器。
+  - Nano「合图使用更高一档分辨率」（默认关）：如 1K × 4 张用 2K 请求，切出来是原生 1K；高档位单价可能更高。
+  - 文件：`…_01-宫格.png`（合成原图）、`…_01-1.png` … `…_01-N.png`（拆切后）。队列行显示合成图与各张缩略图；「继续修改」可选其中任意一张。
 - **图库**：已完成图片网格，双击或「大图预览」用 antd Image 预览（可左右翻），继续修改、打开所在文件夹、复制提示词、删除记录。
 - **设置**：API Key（可显隐、测试连接不扣费）、节点、代理、输出目录、并发数、默认模型与参数、主题与明暗、版本与官网链接。
 
@@ -49,12 +57,21 @@
 | 输出目录 | `图片/绘境` | 可选择、可在访达 / 资源管理器中打开 |
 | 同时生成 | 2 | 1–5 |
 | 默认模型 / 参数 / 张数 | Nano Banana 2.1 · 自动比例 · 1K · 1 张 | 出图页启动时套用 |
+| 拆切后放大到单张原尺寸 | 开 | 多合一拆切后用 Lanczos3 缩放到单张原尺寸 |
 | 主题 | 森翠雅韵 · 浅色 | 即时生效，同时写进设置文件 |
 
 数据（`settings.json`、`tasks.json`）：
 
 - macOS：`~/Library/Application Support/com.aowu.huijing/`
 - Windows 便携版：exe 同目录的 `绘境数据/`，整个文件夹拷走即用（exe 所在目录不可写时退回 `%APPDATA%\com.aowu.huijing\`）。
+
+## 应用名称
+
+所有地方都显示「绘境」：窗口标题、macOS 的 Dock / 菜单栏 / 访达（`productName` + `src-tauri/Info.plist` 的 `CFBundleName`、`CFBundleDisplayName`）、Windows exe 版本资源的 `FileDescription` / `ProductName`。
+
+可执行文件名保持 ASCII（`huijing`）：实测中文可执行文件名会让 macOS 的 CoreFoundation 在 `NSBundle bundleWithIdentifier`（wry 启动时调用）里崩溃——未打包时 SIGTRAP、放进 .app 后 SIGSEGV；同一个二进制改成 ASCII 名就正常。
+
+开发运行时，未打包的可执行文件在 Dock 里只能显示文件名，所以 macOS 的 `tauri dev` 通过 `src-tauri/tauri.macos.conf.json` 配置的 runner（`scripts/macos/dev-runner.sh`）把编译出的二进制装进一个最小的 `target/debug/绘境.app` 再启动，Dock、菜单栏显示「绘境」和应用图标，与正式包一致。
 
 ## 开发
 
@@ -73,7 +90,14 @@ cargo test
 cargo clippy --all-targets
 ```
 
-单元测试覆盖：两个模型的请求体构造与路由、响应解析与错误归类、队列状态流转与重启恢复、并发调度、文件命名与不覆盖、参考图缩放编码、设置读写。
+单元测试覆盖：两个模型的请求体构造与路由、响应解析与错误归类、队列状态流转与重启恢复、并发调度、文件命名与不覆盖、参考图缩放编码、设置读写、多合一布局（两个模型 × 各比例 × N=2/3/4）、提示词包装、宫格拆切（含偏移的分隔线）与 Lanczos3 缩放。
+
+用真实合成图离线验证拆切：
+
+```bash
+COMPOSITE=~/Pictures/绘境/xxx-宫格.png MODEL=nano-banana-2.1 RATIO=16:9 TIER=1K COUNT=4 OUT=/tmp/split \
+  cargo test resplit_real -- --ignored --nocapture
+```
 
 ## 打包
 
@@ -103,9 +127,10 @@ cp src-tauri/target/x86_64-pc-windows-msvc/release/huijing.exe "打包产物/绘
 
 ## 应用图标
 
-`src-tauri/app-icon.svg`：森翠绿圆角底板 + 米色画框山水 + 金色星光笔触；侧栏品牌标记（`src/components/BrandMark.tsx`）用同一图形的单色版。改完后重新生成：
+`src-tauri/app-icon.svg`：森翠绿圆角底板 + 米色画框山水 + 金色星光笔触，按 macOS 惯例在 1024 画布里留边（底板 824×824 居中、圆角 185），底板外透明。侧栏品牌标记（`src/components/BrandMark.tsx`）用同一图形的单色版。改完后重新生成并校验透明：
 
 ```bash
-qlmanage -t -s 1024 -o /tmp src-tauri/app-icon.svg && cp /tmp/app-icon.svg.png src-tauri/app-icon.png
+swift scripts/icon/render-svg.swift src-tauri/app-icon.svg src-tauri/app-icon.png 1024   # 渲染到透明画布（qlmanage 会垫白底，不要用）
 npx tauri icon src-tauri/app-icon.png && rm -rf src-tauri/icons/android src-tauri/icons/ios
+swift scripts/icon/check-alpha.swift src-tauri/icons/*.png src-tauri/icons/icon.ico src-tauri/icons/icon.icns   # 逐个尺寸读四角 alpha，必须为 0
 ```

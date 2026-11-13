@@ -53,6 +53,8 @@ pub struct Settings {
     pub gpt_params: GenParams,
     pub nano_params: GenParams,
     pub default_count: u8,
+    /// 多合一拆切后，把每张缩放到该模型单独出一张时的尺寸（Lanczos3）
+    pub upscale_parts: bool,
     /// 主题：ui-kit 的 accent 键，写在设置里，Windows 便携版拷走后也能保持
     pub theme_accent: String,
     /// light / dark / system
@@ -71,6 +73,7 @@ impl Default for Settings {
             gpt_params: GenParams { aspect_ratio: "1:1".into(), ..GenParams::default() },
             nano_params: GenParams { aspect_ratio: "auto".into(), image_size: "1K".into(), ..GenParams::default() },
             default_count: 1,
+            upscale_parts: true,
             theme_accent: String::new(),
             theme_mode: String::new(),
         }

@@ -9,6 +9,10 @@ edition = "2024"
 name = "huijing_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# 可执行文件名保持 ASCII：macOS 上中文可执行文件名会让 CoreFoundation 在
+# NSBundle bundleWithIdentifier 里崩溃（实测未打包 SIGTRAP、放进 .app 后 SIGSEGV）。
+# 显示名由 productName（CFBundleName）、Info.plist 的 CFBundleDisplayName 与 Windows 版本资源负责。
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -22,6 +26,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["time", "sync", "macros", "rt"] }
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff"] }
+fast_image_resize = { version = "6", features = ["image"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [profile.release]

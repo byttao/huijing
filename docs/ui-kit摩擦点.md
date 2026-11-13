@@ -41,3 +41,13 @@
 
 - `AppShell` / `Page` / `Workspace` / `Panel` / `LogViewer` 骨架直接可用，深浅色、毛玻璃、森翠主题下对比度都没问题；`antd lint` 零告警。
 - `useFileDrop` 窗口级拖拽 + `DropZone compact` 很顺；`cn` 已登记 `text-h2` 等自定义刻度，不会被 tailwind-merge 误合并。
+
+## 六、第二轮（多合一、比例预览、名称与图标）新增
+
+1. **比例选择没有现成件**：要在 antd `Select` 的选项里画按真实宽高比的小矩形、在参数区画比例预览框，只能自写 `RatioIcon` / `GridPreview`（`src/components/Ratio.tsx`）。kit 没有「比例 / 尺寸选择器」，也没有任何「示意图」类组件的配色约定。
+2. **动态尺寸与「禁止 `style={{`」冲突**：预览框的宽高比是运行时算出来的，自检第 5 条禁止 `style={{`，只能改用 SVG 的 `viewBox` 让浏览器按比例缩放来绕开。kit 自己的 `Workspace`（gridTemplateColumns）、`ThemePicker`（色块背景）都用了内联 style，规则没有给「数据驱动的尺寸」留例外。
+3. **SVG 里怎么用 token 颜色没写**：Tailwind 的 `fill-primary-bg` / `stroke-primary` 可用（preset 的 colors 会生成 fill / stroke 类），但 design.md 和 AI_GUIDE 都没提，只能自己试出来。
+4. **图片宫格 / 缩略图条**：队列行里要放「合成图 + N 张拆切图」的小缩略图条，图库要按「每张图」而不是「每个任务」展示——还是没有 `ImageGrid` / `ThumbStrip`，`FileRow` 更放不下（见一·1、一·3）。
+5. **行内操作的二级菜单**：多合一时「继续修改」要选具体哪一张，只能在行尾图标按钮上套 antd `Dropdown`；kit 对行尾操作的数量、溢出（「更多」菜单）没有约定，`FileRow.trailing` 只是个槽。
+6. **说明文字的位置**：「合图使用更高一档分辨率（可能影响单价）」「比例为自动时不能多合一」这类依赖其他参数的提示，只能塞进 `Form.Item extra`；kit 的右栏没有「参数提示 / 警示」的样式约定（`Alert` 在 300px 宽的右栏里太重）。
+7. **品牌与图标流程**：kit 只管界面，`brand.mark` 之外没提应用图标；这次发现 `qlmanage` 渲染 SVG 会垫白底导致图标四角不透明，改用 AppKit 渲染并写了逐尺寸读 alpha 的校验脚本（`scripts/icon/`）。若 kit 定位是「Tauri 桌面工具套件」，可以附带图标生成 / 校验脚本与 macOS 留边规范。

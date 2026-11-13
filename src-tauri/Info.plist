@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- 与 tauri.conf.json 的 productName 一起保证 Dock、菜单栏、访达里显示「绘境」 -->
+  <key>CFBundleDisplayName</key>
+  <string>绘境</string>
+  <key>CFBundleName</key>
+  <string>绘境</string>
+</dict>
+</plist>

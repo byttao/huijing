@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ClearOutlined, PictureOutlined, SettingOutlined } from "@ant-design/icons";
-import { Alert, App as AntApp, Button, Empty, Form, Input, Segmented, Select, Typography } from "antd";
+import { Alert, App as AntApp, Button, Checkbox, Empty, Form, Input, Segmented, Select, Typography } from "antd";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -16,6 +16,7 @@ import {
   useLogger,
   type LogLevel,
 } from "../ui-kit";
+import { GridPreview, gptRatioOptions, nanoRatioOptions } from "../components/Ratio";
 import { RefImages } from "../components/RefImages";
 import { TaskRow } from "../components/TaskRow";
 import { Thumb } from "../components/Thumb";
@@ -26,15 +27,13 @@ import {
   MODELS,
   MODES,
   OUTPUT_FORMATS,
-  gptRatioOptions,
   isActive,
-  nanoRatioOptions,
   shortPrompt,
 } from "../lib/options";
-import type { EditRequest, GenParams, Mode, ModelId, SettingsView, Task } from "../lib/types";
+import type { EditRequest, GenParams, GridPlan, Mode, ModelId, SettingsView, Task } from "../lib/types";
 
 const IS_MAC = /Mac/i.test(navigator.userAgent);
-const COUNTS = [1, 2, 3, 4].map((n) => ({ value: n, label: `${n} 张` }));
+const COUNTS = [1, 2, 3, 4].map((n) => ({ value: n, label: n === 1 ? "1 张" : `${n} 合 1` }));
 const MAX_REFS = 8;
 
 interface GeneratePageProps {
@@ -55,11 +54,13 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
   const [mode, setMode] = useState<Mode>("text");
   const [model, setModel] = useState<ModelId>("nano-banana-2.1");
   const [prompt, setPrompt] = useState("");
-  const [gptParams, setGptParams] = useState<GenParams>({ aspectRatio: "1:1", imageSize: "1K", background: "", outputFormat: "png" });
-  const [nanoParams, setNanoParams] = useState<GenParams>({ aspectRatio: "auto", imageSize: "1K", background: "", outputFormat: "png" });
+  const [gptParams, setGptParams] = useState<GenParams>({ aspectRatio: "1:1", imageSize: "1K", background: "", outputFormat: "png", higherRes: false });
+  const [nanoParams, setNanoParams] = useState<GenParams>({ aspectRatio: "auto", imageSize: "1K", background: "", outputFormat: "png", higherRes: false });
   const [count, setCount] = useState(1);
   const [refs, setRefs] = useState<string[]>([]);
-  const [editSource, setEditSource] = useState<Task | null>(null);
+  const [editSource, setEditSource] = useState<{ task: Task; file: string } | null>(null);
+  const [plan, setPlan] = useState<GridPlan | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // 首次拿到设置时套用默认模型与参数
@@ -77,14 +78,15 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
   // 「继续修改」：沿用来源任务的模型与参数，结果图作为参考图
   useEffect(() => {
     if (!editRequest) return;
-    const { task } = editRequest;
-    setEditSource(task);
+    const { task, file } = editRequest;
+    setEditSource({ task, file });
     setMode("edit");
     setModel(task.model);
     if (task.model === "gpt-image-2.6") setGptParams(task.params);
     else setNanoParams(task.params);
     setPrompt(task.prompt);
-    log(`继续修改「${shortPrompt(task.prompt)}」：已带入结果图与原参数，改好提示词后加入队列。`);
+    const which = task.files.length > 1 ? `第 ${task.files.indexOf(file) + 1} 张` : "结果图";
+    log(`继续修改「${shortPrompt(task.prompt)}」：已带入${which}与原参数，改好提示词后加入队列。`);
   }, [editRequest, log]);
 
   // Rust 端队列日志
@@ -138,8 +140,32 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
   const setParams = (patch: Partial<GenParams>) =>
     model === "gpt-image-2.6" ? setGptParams((p) => ({ ...p, ...patch })) : setNanoParams((p) => ({ ...p, ...patch }));
 
+  // 宫格方案预览：与 Rust 端加入队列时同一套计算；设置里的「放大」开关变了也要重算
+  const upscaleSetting = settings?.settings.upscaleParts;
+  useEffect(() => {
+    let stale = false;
+    api
+      .planGrid(model, params, count)
+      .then((p) => !stale && (setPlan(p), setPlanError(null)))
+      .catch((err) => !stale && (setPlan(null), setPlanError(errorText(err))));
+    return () => {
+      stale = true;
+    };
+  }, [model, params, count, upscaleSetting]);
+
+  // 比例为自动、或 GPT 选了 GIF / SVG 时不能多合一
+  const multiBlocked =
+    params.aspectRatio === "auto"
+      ? "比例为「自动」时无法多合一，请先选一个具体比例"
+      : model === "gpt-image-2.6" && (params.outputFormat === "gif" || params.outputFormat === "svg")
+        ? "GIF / SVG 输出无法拆切，多合一请用 PNG"
+        : null;
+  useEffect(() => {
+    if (multiBlocked && count > 1) setCount(1);
+  }, [multiBlocked, count]);
+
   const hasKey = !!settings?.settings.apiKey;
-  const refImages = mode === "image" ? refs : mode === "edit" && editSource ? editSource.files : [];
+  const refImages = mode === "image" ? refs : mode === "edit" && editSource ? [editSource.file] : [];
   const blocker = !hasKey
     ? "请先到「设置」填写 API Key"
     : !prompt.trim()
@@ -164,10 +190,10 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
         params,
         refImages,
         count,
-        parentId: mode === "edit" && editSource ? editSource.id : null,
+        parentId: mode === "edit" && editSource ? editSource.task.id : null,
       });
-      log(`已加入队列：「${shortPrompt(prompt.trim())}」× ${created.length}`, "info");
-      toast.success(`已加入队列 · ${created.length} 张`);
+      log(`已加入队列：「${shortPrompt(prompt.trim())}」${count > 1 ? `· ${count} 合 1（${created[0]?.grid?.cols}×${created[0]?.grid?.rows} 宫格）` : ""}`, "info");
+      toast.success(count > 1 ? `已加入队列 · ${count} 合 1（1 次请求）` : "已加入队列 · 1 张");
     } catch (err) {
       log(`加入队列失败：${errorText(err)}`, "error");
       toast.error(errorText(err));
@@ -279,9 +305,10 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                     (editSource ? (
                       <Form.Item label="修改来源">
                         <div className="flex items-center gap-2">
-                          <Thumb path={editSource.files[0]} size="md" alt={editSource.prompt} />
-                          <Typography.Paragraph type="secondary" ellipsis={{ rows: 3, tooltip: editSource.prompt }} className="m-0 min-w-0 flex-1 text-sm">
-                            {editSource.prompt}
+                          <Thumb path={editSource.file} size="md" alt={editSource.task.prompt} />
+                          <Typography.Paragraph type="secondary" ellipsis={{ rows: 3, tooltip: editSource.task.prompt }} className="m-0 min-w-0 flex-1 text-sm">
+                            {editSource.task.files.length > 1 && `第 ${editSource.task.files.indexOf(editSource.file) + 1} 张 · `}
+                            {editSource.task.prompt}
                           </Typography.Paragraph>
                         </div>
                       </Form.Item>
@@ -317,8 +344,23 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                     </>
                   )}
 
-                  <Form.Item label="张数" extra="每张是一个独立任务，分别排队、分别计费">
-                    <Segmented block options={COUNTS} value={count} onChange={(v) => setCount(Number(v))} />
+                  <Form.Item
+                    label="张数"
+                    extra={multiBlocked ?? (count > 1 ? `一次请求在一张图里画 ${count} 个方案，只扣一次费，下载后自动拆成 ${count} 张` : "选 2–4 张时合在一张图里出，再自动拆切")}
+                  >
+                    <Segmented block options={COUNTS} value={count} disabled={!!multiBlocked} onChange={(v) => setCount(Number(v))} />
+                  </Form.Item>
+
+                  {model === "nano-banana-2.1" && count > 1 && (
+                    <Form.Item extra={params.imageSize === "4K" ? "已是最高档 4K，无法再升档" : "例如 1K × 4 张用 2K 请求，切出来是原生 1K、不靠放大。高档位单价可能更高"}>
+                      <Checkbox checked={params.higherRes} disabled={params.imageSize === "4K"} onChange={(e) => setParams({ higherRes: e.target.checked })}>
+                        合图使用更高一档分辨率
+                      </Checkbox>
+                    </Form.Item>
+                  )}
+
+                  <Form.Item label={count > 1 ? "预览 · 宫格与尺寸" : "预览"}>
+                    <GridPreview plan={plan} error={planError} />
                   </Form.Item>
                 </Form>
               </div>
@@ -327,7 +369,7 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
             <div className="flex shrink-0 flex-col gap-2">
               {blocker && hasKey && <span className="text-sm text-text-tertiary">{blocker}</span>}
               <Button type="primary" block loading={submitting} disabled={!!blocker} onClick={submit}>
-                加入队列 · {count} 张
+                {count > 1 ? `加入队列 · ${count} 合 1` : "加入队列 · 1 张"}
               </Button>
             </div>
           </>

@@ -1,7 +1,8 @@
 //! 参考图编码：本地图片读成 data URL。长边超过 2048 时先缩小再编码，避免请求体过大。
+//! 缩小统一用 fast_image_resize 的 Lanczos3（见 split.rs）。
 
 use base64::Engine;
-use image::{GenericImageView, ImageFormat, imageops::FilterType};
+use image::{GenericImageView, ImageFormat};
 use std::io::Cursor;
 use std::path::Path;
 
@@ -32,7 +33,7 @@ pub fn encode_bytes(bytes: &[u8]) -> Result<String, String> {
     {
         return Ok(data_url(mime, bytes));
     }
-    let img = if long > MAX_SIDE { img.resize(MAX_SIDE, MAX_SIDE, FilterType::Lanczos3) } else { img };
+    let img = crate::split::shrink_to(&img, MAX_SIDE)?;
     let mut out = Cursor::new(Vec::new());
     if img.color().has_alpha() {
         img.write_to(&mut out, ImageFormat::Png).map_err(|e| format!("编码失败：{e}"))?;

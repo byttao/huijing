@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CopyOutlined, DeleteOutlined, EyeOutlined, FolderOpenOutlined, PictureOutlined } from "@ant-design/icons";
+import { AppstoreOutlined, CopyOutlined, DeleteOutlined, EyeOutlined, FolderOpenOutlined, PictureOutlined } from "@ant-design/icons";
 import { App as AntApp, Button, Descriptions, Empty, Image, Segmented, Typography } from "antd";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { ListWell, LogViewer, Page, Panel, Workspace, cn, fileName, useLogger } from "../ui-kit";
@@ -23,7 +23,7 @@ const FILTERS = [
 
 interface GalleryPageProps {
   tasks: Task[];
-  onEdit: (task: Task) => void;
+  onEdit: (task: Task, file?: string) => void;
 }
 
 export function GalleryPage({ tasks, onEdit }: GalleryPageProps) {
@@ -111,6 +111,9 @@ export function GalleryPage({ tasks, onEdit }: GalleryPageProps) {
                     items={[
                       { key: "model", label: "模型", children: modelLabel(selected.task.model) },
                       { key: "mode", label: "模式", children: modeLabel(selected.task.mode) },
+                      ...(selected.task.count > 1
+                        ? [{ key: "part", label: "多合一", children: `第 ${selected.task.files.indexOf(selected.file) + 1} / ${selected.task.files.length} 张` }]
+                        : []),
                       { key: "params", label: "参数", children: paramsSummary(selected.task.model, selected.task.params) },
                       ...(parent ? [{ key: "parent", label: "改自", children: `「${shortPrompt(parent.prompt, 14)}」` }] : []),
                       { key: "time", label: "完成", children: formatTime(selected.task.finishedAt ?? selected.task.createdAt) },
@@ -138,6 +141,11 @@ export function GalleryPage({ tasks, onEdit }: GalleryPageProps) {
                     <Button danger icon={<DeleteOutlined />} onClick={() => remove(selected.task)}>
                       删除记录…
                     </Button>
+                    {selected.task.compositeFile && (
+                      <Button icon={<AppstoreOutlined />} className="col-span-2" onClick={() => reveal({ ...selected, file: selected.task.compositeFile! })}>
+                        查看合成原图
+                      </Button>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -145,7 +153,7 @@ export function GalleryPage({ tasks, onEdit }: GalleryPageProps) {
               )}
             </Panel>
             <div className="shrink-0">
-              <Button type="primary" block disabled={!selected} onClick={() => selected && onEdit(selected.task)}>
+              <Button type="primary" block disabled={!selected} onClick={() => selected && onEdit(selected.task, selected.file)}>
                 继续修改 · 这张
               </Button>
             </div>

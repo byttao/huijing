@@ -2,9 +2,11 @@
 
 mod api;
 mod download;
+mod grid;
 mod images;
 mod queue;
 mod settings;
+mod split;
 
 use queue::{EnqueueRequest, Queue, Task};
 use serde::Serialize;
@@ -69,6 +71,13 @@ async fn test_connection(settings: Settings) -> Result<String, String> {
         return Err("请先填写 API Key".into());
     }
     queue::test_api(&settings).await
+}
+
+/// 宫格方案预览：与加入队列时用同一套计算（见 grid.rs）。
+#[tauri::command]
+fn plan_grid(state: State<'_, AppState>, model: api::Model, params: api::GenParams, count: u8) -> Result<grid::GridPlan, String> {
+    let upscale = state.settings.read().unwrap_or_else(|e| e.into_inner()).upscale_parts;
+    grid::plan(model, &params, count, upscale)
 }
 
 #[tauri::command]
@@ -146,6 +155,7 @@ pub fn run() {
             get_settings,
             save_settings,
             test_connection,
+            plan_grid,
             list_tasks,
             enqueue,
             cancel_task,

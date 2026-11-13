@@ -44,6 +44,8 @@ pub struct GenParams {
     pub background: String,
     /// GPT 输出格式：png（默认）/ gif / svg
     pub output_format: String,
+    /// Nano 多合一时用高一档分辨率请求（如 1K × 4 张用 2K 请求，切出来是原生 1K）
+    pub higher_res: bool,
 }
 
 impl Default for GenParams {
@@ -53,6 +55,7 @@ impl Default for GenParams {
             image_size: "1K".into(),
             background: String::new(),
             output_format: "png".into(),
+            higher_res: false,
         }
     }
 }

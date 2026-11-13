@@ -36,11 +36,11 @@ export const GPT_RATIOS: { value: string; size: string }[] = [
 
 export const NANO_RATIOS = ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9", "1:4", "4:1", "1:8", "8:1"];
 
-export const gptRatioOptions = GPT_RATIOS.map((r) => ({
-  value: r.value,
-  label: r.value === "auto" ? "自动" : `${r.value}　${r.size}`,
-}));
-export const nanoRatioOptions = NANO_RATIOS.map((r) => ({ value: r, label: r === "auto" ? "自动" : r }));
+/** "a:b" → [a, b]；auto 返回 null */
+export function parseRatio(r: string): [number, number] | null {
+  const m = /^(\d+):(\d+)$/.exec(r);
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}
 
 export const IMAGE_SIZES = ["1K", "2K", "4K"];
 export const BACKGROUNDS = [
@@ -54,6 +54,8 @@ export const OUTPUT_FORMATS = [
 ];
 
 /** 参数摘要，用于任务行与图库 */
+export const sizeText = ([w, h]: [number, number]) => (w && h ? `${w}×${h}` : "自动");
+
 export function paramsSummary(model: ModelId, p: GenParams) {
   const ratio = p.aspectRatio === "auto" || !p.aspectRatio ? "自动比例" : p.aspectRatio;
   if (model === "nano-banana-2.1") return `${ratio} · ${p.imageSize || "1K"}`;

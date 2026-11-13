@@ -31,19 +31,19 @@ export default function App() {
   useThemeSync(view, setView);
 
   const startEdit = useCallback(
-    (task: Task) => {
+    (task: Task, file?: string) => {
       if (!task.files.length) {
         toast.warning("这条任务还没有本地图片，无法继续修改");
         return;
       }
-      setEditRequest({ task, nonce: Date.now() });
+      setEditRequest({ task, file: file ?? task.files[0], nonce: Date.now() });
       setPage("generate");
     },
     [toast]
   );
 
   const activeCount = tasks.filter((t) => isActive(t.status)).length;
-  const galleryCount = tasks.filter((t) => t.status === "succeeded").length;
+  const galleryCount = tasks.reduce((n, t) => n + (t.status === "succeeded" ? t.files.length : 0), 0);
 
   const nav = useMemo(
     () => [

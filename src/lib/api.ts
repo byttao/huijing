@@ -1,11 +1,12 @@
 // 后端命令封装：页面只调这里，不直接写命令名
 import { invoke } from "@tauri-apps/api/core";
-import type { EnqueueRequest, Settings, SettingsView, Task } from "./types";
+import type { EnqueueRequest, GenParams, GridPlan, ModelId, Settings, SettingsView, Task } from "./types";
 
 export const api = {
   getSettings: () => invoke<SettingsView>("get_settings"),
   saveSettings: (settings: Settings) => invoke<SettingsView>("save_settings", { settings }),
   testConnection: (settings: Settings) => invoke<string>("test_connection", { settings }),
+  planGrid: (model: ModelId, params: GenParams, count: number) => invoke<GridPlan>("plan_grid", { model, params, count }),
   listTasks: () => invoke<Task[]>("list_tasks"),
   enqueue: (request: EnqueueRequest) => invoke<Task[]>("enqueue", { request }),
   cancel: (id: string) => invoke<void>("cancel_task", { id }),

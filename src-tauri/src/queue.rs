@@ -12,6 +12,8 @@
 
 use crate::api::{self, ApiContext, GenParams, GenRequest, Model, Route, async_task, gpt_image};
 use crate::download;
+use crate::grid::{self, GridPlan};
+use image::GenericImageView;
 use crate::images;
 use crate::settings::{Settings, build_client, write_atomic};
 use serde::{Deserialize, Serialize};
@@ -96,6 +98,25 @@ pub struct Task {
     /// 是否显示在队列里；「清空已结束」后成功的任务只留在图库
     #[serde(default = "default_true")]
     pub in_queue: bool,
+    /// 多合一张数（1 = 普通单张）
+    #[serde(default = "default_one")]
+    pub count: u8,
+    /// 宫格方案（多合一时用于请求与拆切；单张时记录尺寸）
+    #[serde(default)]
+    pub grid: Option<GridPlan>,
+    /// 实际发给接口的提示词（多合一时外包宫格指令）；`prompt` 始终是用户原文
+    #[serde(default)]
+    pub sent_prompt: Option<String>,
+    /// 多合一的合成原图（拆切后 `files` 是各张）
+    #[serde(default)]
+    pub composite_file: Option<String>,
+    /// 非致命提示，例如拆切失败只保留了合成原图
+    #[serde(default)]
+    pub notice: Option<String>,
+}
+
+fn default_one() -> u8 {
+    1
 }
 
 /// 重启后需要继续的工作。
@@ -188,6 +209,8 @@ impl Task {
         self.remote_id = None;
         self.result_urls.clear();
         self.files.clear();
+        self.composite_file = None;
+        self.notice = None;
         self.error = None;
         self.started_at = None;
         self.finished_at = None;
@@ -252,8 +275,9 @@ pub struct EnqueueRequest {
     pub parent_id: Option<String>,
 }
 
-/// 校验请求并展开成 `count` 个独立任务。
-pub fn expand_request(req: &EnqueueRequest, now: i64, mut next_id: impl FnMut() -> String) -> Result<Vec<Task>, String> {
+/// 校验请求并生成一个任务。`count` > 1 时是「多合一」：仍然只有一个任务、一次请求，
+/// 结果按宫格拆成 count 张。`upscale` 来自设置「拆切后放大到单张原尺寸」。
+pub fn build_task(req: &EnqueueRequest, now: i64, upscale: bool, mut next_id: impl FnMut() -> String) -> Result<Task, String> {
     let prompt = req.prompt.trim();
     if prompt.is_empty() {
         return Err("请先填写提示词".into());
@@ -264,32 +288,50 @@ pub fn expand_request(req: &EnqueueRequest, now: i64, mut next_id: impl FnMut() 
     if req.mode == Mode::Text && !req.ref_images.is_empty() {
         return Err("文生图模式不带参考图".into());
     }
-    let count = req.count.clamp(1, 4) as u32;
-    let batch_id = next_id();
-    Ok((1..=count)
-        .map(|seq| Task {
-            id: next_id(),
-            batch_id: batch_id.clone(),
-            seq,
-            parent_id: req.parent_id.clone(),
-            mode: req.mode,
-            model: req.model,
-            prompt: prompt.to_string(),
-            params: req.params.clone(),
-            ref_images: req.ref_images.clone(),
-            status: TaskStatus::Queued,
-            progress: 0,
-            remote_id: None,
-            result_urls: vec![],
-            files: vec![],
-            error: None,
-            created_at: now,
-            started_at: None,
-            finished_at: None,
-            attempts: 0,
-            in_queue: true,
-        })
-        .collect())
+    let count = req.count.clamp(1, 4);
+    let plan = grid::plan(req.model, &req.params, count, upscale)?;
+    let sent_prompt = grid::wrap_prompt(prompt, &plan);
+    let id = next_id();
+    Ok(Task {
+        batch_id: id.clone(),
+        id,
+        seq: 1,
+        parent_id: req.parent_id.clone(),
+        mode: req.mode,
+        model: req.model,
+        prompt: prompt.to_string(),
+        params: req.params.clone(),
+        ref_images: req.ref_images.clone(),
+        status: TaskStatus::Queued,
+        progress: 0,
+        remote_id: None,
+        result_urls: vec![],
+        files: vec![],
+        error: None,
+        created_at: now,
+        started_at: None,
+        finished_at: None,
+        attempts: 0,
+        in_queue: true,
+        count,
+        sent_prompt: (sent_prompt != prompt).then_some(sent_prompt),
+        grid: Some(plan),
+        composite_file: None,
+        notice: None,
+    })
+}
+
+/// 实际请求用的提示词与参数：多合一时换成宫格提示词、合成比例与（可能升档的）分辨率。
+pub fn request_of(task: &Task) -> (String, GenParams) {
+    let prompt = task.sent_prompt.clone().unwrap_or_else(|| task.prompt.clone());
+    let mut params = task.params.clone();
+    if let Some(plan) = task.grid.as_ref().filter(|p| p.count > 1) {
+        params.aspect_ratio = plan.request_ratio.clone();
+        if !plan.request_tier.is_empty() {
+            params.image_size = plan.request_tier.clone();
+        }
+    }
+    (prompt, params)
 }
 
 /// 调度：在不超过并发上限的前提下，按入队顺序挑出要启动的排队任务。
@@ -497,12 +539,11 @@ impl Queue {
                 return Err(format!("参考图不存在：{path}"));
             }
         }
-        let tasks = expand_request(&req, now_ms(), || self.next_id())?;
+        let task = build_task(&req, now_ms(), settings.upscale_parts, || self.next_id())?;
+        let tasks = vec![task.clone()];
         let mut st = self.lock();
-        for task in &tasks {
-            st.tasks.push(task.clone());
-            self.emit(task);
-        }
+        st.tasks.push(task.clone());
+        self.emit(&task);
         self.save(&st);
         self.pump_locked(&mut st);
         Ok(tasks)
@@ -634,7 +675,8 @@ impl Queue {
         })
         .await
         .map_err(|e| e.to_string())??;
-        let req = GenRequest { model: task.model, prompt: task.prompt.clone(), params: task.params.clone(), images };
+        let (prompt, params) = request_of(task);
+        let req = GenRequest { model: task.model, prompt, params, images };
         match api::route(&req) {
             Route::GptSync => gpt_image::generate(ctx, &req).await.map_err(|e| e.to_string()),
             Route::Async(body) => {
@@ -673,7 +715,12 @@ impl Queue {
         };
         let mut files = Vec::new();
         for (i, url) in task.result_urls.iter().enumerate() {
-            let name = download::build_file_name(task.created_at, task.model.id(), task.seq, i, &download::ext_from_url(url, fallback));
+            let mut name = download::build_file_name(task.created_at, task.model.id(), task.seq, i, &download::ext_from_url(url, fallback));
+            if task.count > 1
+                && let Some((stem, ext)) = name.rsplit_once('.')
+            {
+                name = format!("{stem}-宫格.{ext}");
+            }
             let dest = match download::reserve_unique(&dir, &name) {
                 Ok(p) => p,
                 Err(e) => {
@@ -691,13 +738,44 @@ impl Queue {
             }
             files.push(dest.to_string_lossy().to_string());
         }
+        // 多合一：按宫格拆切（失败时保留合成原图，任务仍算完成）
+        let plan = task.grid.clone().filter(|p| p.count > 1);
+        let (files, composite, notice) = match plan {
+            None => (files, None, None),
+            Some(plan) => {
+                self.log("processing", format!("{} 下载完成，按 {}×{} 宫格拆切…", task.label(), plan.cols, plan.rows));
+                let composites = files.clone();
+                let out_dir = dir.clone();
+                let split = tauri::async_runtime::spawn_blocking(move || split_composites(&composites, &plan, &out_dir))
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| r);
+                match split {
+                    Ok(parts) => (parts, files.first().cloned(), None),
+                    Err(e) => (files.clone(), files.first().cloned(), Some(format!("拆切失败：{e}，已保留合成原图"))),
+                }
+            }
+        };
         let count = files.len();
-        if self.update(id, true, |t| t.downloaded(files, now_ms())).is_some() {
-            self.log("success", format!("{} 已完成，保存 {count} 张到 {}", task.label(), dir.display()));
+        let note = notice.clone();
+        if self
+            .update(id, true, |t| {
+                t.downloaded(files, now_ms())?;
+                t.composite_file = composite;
+                t.notice = notice;
+                Ok(())
+            })
+            .is_some()
+        {
+            match note {
+                Some(n) => self.log("warning", format!("{} 已下载，但{n}", task.label())),
+                None => self.log("success", format!("{} 已完成，保存 {count} 张到 {}", task.label(), dir.display())),
+            }
         }
     }
 
     fn finish_download_failed(&self, task: &Task, message: String) {
+        // 下载失败可单独「重试下载」，不重新扣费
         let text = format!("图片下载失败：{message}。结果已生成，可点「重试下载」（不重新扣费）");
         if self.update(&task.id, true, |t| t.download_failed(text.clone(), now_ms())).is_some() {
             self.log("error", format!("{} {text}", task.label()));
@@ -717,6 +795,33 @@ pub fn test_api(settings: &Settings) -> impl std::future::Future<Output = Result
         let ctx = ctx?;
         api::test_connection(&ctx).await.map_err(|e| e.to_string())
     }
+}
+
+/// 把合成原图按宫格拆成多张 PNG，写在原图旁边：`…_01-宫格.png` → `…_01-1.png` … 。
+/// 开了「放大到单张原尺寸」时每张用 Lanczos3 缩放到 `plan.output_size`。
+pub fn split_composites(composites: &[String], plan: &GridPlan, dir: &Path) -> Result<Vec<String>, String> {
+    let ratio = grid::parse_ratio(&plan.cell_ratio).ok_or("比例无效")?;
+    let mut out = Vec::new();
+    for composite in composites {
+        let path = Path::new(composite);
+        let img = image::open(path).map_err(|e| format!("读取合成图失败：{e}"))?;
+        let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let stem = stem.strip_suffix("-宫格").unwrap_or(&stem).to_string();
+        // 目标尺寸以实际合成图为准（预览里的 output_size 只是估算）；放大时每格直接按目标尺寸的
+        // 比例裁切（模型自己的尺寸未必是严格的 a:b，如 16:9 是 1376×768），缩放时就不会变形
+        let target = if plan.upscale { grid::target_from_composite(img.dimensions(), plan) } else { None };
+        let crop_ratio = target.map(|[w, h]| (w, h)).unwrap_or(ratio);
+        for (k, part) in crate::split::split_grid(&img, plan.cols as u32, plan.rows as u32, crop_ratio).into_iter().enumerate() {
+            let part = match target {
+                Some([w, h]) => crate::split::resize(&part, w, h)?,
+                None => part,
+            };
+            let dest = download::reserve_unique(dir, &format!("{stem}-{}.png", k + 1)).map_err(|e| format!("创建文件失败：{e}"))?;
+            part.save_with_format(&dest, image::ImageFormat::Png).map_err(|e| format!("保存拆切图失败：{e}"))?;
+            out.push(dest.to_string_lossy().to_string());
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -744,24 +849,66 @@ mod tests {
     }
 
     fn task() -> Task {
-        expand_request(&request(Mode::Text, 0, 1), 1000, ids()).unwrap().remove(0)
+        build_task(&request(Mode::Text, 0, 1), 1000, true, ids()).unwrap()
     }
 
     #[test]
-    fn expand_count_and_validation() {
-        let tasks = expand_request(&request(Mode::Text, 0, 3), 1, ids()).unwrap();
-        assert_eq!(tasks.len(), 3);
-        assert_eq!(tasks.iter().map(|t| t.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
-        assert!(tasks.iter().all(|t| t.batch_id == "id1" && t.prompt == "水墨山水" && t.status == TaskStatus::Queued));
-        assert_eq!(expand_request(&request(Mode::Text, 0, 9), 1, ids()).unwrap().len(), 4);
-        assert!(expand_request(&request(Mode::Image, 0, 1), 1, ids()).is_err());
-        assert!(expand_request(&request(Mode::Text, 1, 1), 1, ids()).is_err());
+    fn build_task_validation_and_grid() {
+        let t = build_task(&request(Mode::Text, 0, 1), 1, true, ids()).unwrap();
+        assert_eq!((t.count, t.prompt.as_str(), t.status), (1, "水墨山水", TaskStatus::Queued));
+        assert!(t.sent_prompt.is_none(), "单张不包装提示词");
+        assert!(build_task(&request(Mode::Image, 0, 1), 1, true, ids()).is_err());
+        assert!(build_task(&request(Mode::Text, 1, 1), 1, true, ids()).is_err());
         let mut empty = request(Mode::Text, 0, 1);
         empty.prompt = "   ".into();
-        assert!(expand_request(&empty, 1, ids()).is_err());
+        assert!(build_task(&empty, 1, true, ids()).is_err());
         let mut edit = request(Mode::Edit, 1, 1);
         edit.parent_id = Some("p1".into());
-        assert_eq!(expand_request(&edit, 1, ids()).unwrap()[0].parent_id.as_deref(), Some("p1"));
+        assert_eq!(build_task(&edit, 1, true, ids()).unwrap().parent_id.as_deref(), Some("p1"));
+
+        // 多合一：仍是一个任务，提示词被包装，请求参数换成合成比例
+        let mut multi = request(Mode::Text, 0, 4);
+        multi.params.aspect_ratio = "16:9".into();
+        multi.params.higher_res = true;
+        let t = build_task(&multi, 1, true, ids()).unwrap();
+        assert_eq!(t.count, 4);
+        assert_eq!(t.prompt, "水墨山水");
+        assert!(t.sent_prompt.as_deref().unwrap().contains("2 列 × 2 行"));
+        let (prompt, params) = request_of(&t);
+        assert!(prompt.ends_with("水墨山水"));
+        assert_eq!((params.aspect_ratio.as_str(), params.image_size.as_str()), ("16:9", "2K"));
+        assert_eq!(t.params.image_size, "1K", "任务里保存的仍是用户参数");
+
+        // 比例 auto 不能多合一
+        let mut auto = request(Mode::Text, 0, 2);
+        auto.params.aspect_ratio = "auto".into();
+        assert!(build_task(&auto, 1, true, ids()).is_err());
+    }
+
+    #[test]
+    fn split_composite_files() {
+        use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
+        let dir = std::env::temp_dir().join(format!("huijing-split-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut img = RgbImage::new(400, 400);
+        for (x, y, p) in img.enumerate_pixels_mut() {
+            *p = Rgb([(x / 2) as u8, (y / 2) as u8, ((x + y) % 200) as u8]);
+        }
+        let composite = dir.join("a_01-宫格.png");
+        DynamicImage::ImageRgb8(img).save(&composite).unwrap();
+        let mut req = request(Mode::Text, 0, 4);
+        req.model = Model::GptImage;
+        req.params.aspect_ratio = "1:1".into();
+        let plan = build_task(&req, 1, true, ids()).unwrap().grid.unwrap();
+        let parts = split_composites(&[composite.to_string_lossy().to_string()], &plan, &dir).unwrap();
+        assert_eq!(parts.len(), 4);
+        assert!(parts[0].ends_with("a_01-1.png") && parts[3].ends_with("a_01-4.png"));
+        for p in &parts {
+            // 同档位单张与合成图总像素相同：400×400 的合成图 → 单张 400×400
+            assert_eq!(image::open(p).unwrap().dimensions(), (400, 400), "放大到单张原尺寸");
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -851,13 +998,21 @@ mod tests {
 
     #[test]
     fn scheduling_respects_concurrency_and_order() {
-        let mut tasks = expand_request(&request(Mode::Text, 0, 4), 1, ids()).unwrap();
-        assert_eq!(pick_to_start(&tasks, 0, 2), vec!["id2", "id3"]);
+        let mut n = 0;
+        let mut tasks: Vec<Task> = (0..4)
+            .map(|_| {
+                n += 1;
+                let mut t = task();
+                t.id = format!("t{n}");
+                t
+            })
+            .collect();
+        assert_eq!(pick_to_start(&tasks, 0, 2), vec!["t1", "t2"]);
         tasks[0].start(1).unwrap();
         tasks[1].start(1).unwrap();
         assert!(pick_to_start(&tasks, 2, 2).is_empty());
-        assert_eq!(pick_to_start(&tasks, 1, 2), vec!["id4"]);
-        assert_eq!(pick_to_start(&tasks, 2, 5), vec!["id4", "id5"]);
+        assert_eq!(pick_to_start(&tasks, 1, 2), vec!["t3"]);
+        assert_eq!(pick_to_start(&tasks, 2, 5), vec!["t3", "t4"]);
     }
 
     #[test]
@@ -868,7 +1023,31 @@ mod tests {
         assert!(json.contains("\"model\":\"nano-banana-2.1\""));
         let back: Task = serde_json::from_str(&json).unwrap();
         assert_eq!(back, t);
-        let without_flag = json.replace(",\"inQueue\":true", "");
-        assert!(serde_json::from_str::<Task>(&without_flag).unwrap().in_queue);
+        // 旧版本写下的记录没有新字段，也要能读
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for key in ["inQueue", "count", "grid", "sentPrompt", "compositeFile", "notice"] {
+            v.as_object_mut().unwrap().remove(key);
+        }
+        let old: Task = serde_json::from_value(v).unwrap();
+        assert!(old.in_queue);
+        assert_eq!(old.count, 1);
+    }
+
+    /// 用真实合成图离线验证拆切：
+    /// COMPOSITE=… MODEL=nano-banana-2.1 RATIO=16:9 TIER=1K COUNT=4 OUT=/tmp/x cargo test resplit_real -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn resplit_real() {
+        let env = |k: &str| std::env::var(k).unwrap_or_default();
+        let model: Model = serde_json::from_str(&format!("\"{}\"", env("MODEL"))).unwrap();
+        let params = GenParams { aspect_ratio: env("RATIO"), image_size: env("TIER"), ..GenParams::default() };
+        let plan = grid::plan(model, &params, env("COUNT").parse().unwrap(), true).unwrap();
+        let out = std::path::PathBuf::from(env("OUT"));
+        std::fs::create_dir_all(&out).unwrap();
+        let src = out.join("composite-宫格.png");
+        std::fs::copy(env("COMPOSITE"), &src).unwrap();
+        for p in split_composites(&[src.to_string_lossy().to_string()], &plan, &out).unwrap() {
+            println!("{p} {:?}", image::open(&p).unwrap().dimensions());
+        }
     }
 }
