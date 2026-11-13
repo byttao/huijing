@@ -1,0 +1,19 @@
+node_modules
+dist
+dist-ssr
+*.local
+*.log
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
+# Rust / Tauri
+/src-tauri/target
+/src-tauri/gen/schemas
+
+# 打包产物
+/dist-mac
+/dist-win
+/打包产物

@@ -1,0 +1,32 @@
+[package]
+name = "huijing"
+version = "0.1.0"
+description = "绘境 · AI 出图桌面应用"
+authors = ["aowu"]
+edition = "2024"
+
+[lib]
+name = "huijing_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "socks", "macos-system-configuration"] }
+tokio = { version = "1", features = ["time", "sync", "macros", "rt"] }
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
