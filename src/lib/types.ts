@@ -80,6 +80,9 @@ export interface Task {
   /** 改自的原记录序号与切片号（#7-2） */
   parentNumber: number | null;
   parentPart: number | null;
+  /** 下载进度：已下载字节、总字节 */
+  downloadBytes: number;
+  downloadTotal: number | null;
 }
 
 export type ProxyMode = "none" | "system" | "custom";

@@ -30,7 +30,8 @@ pub const EVENT_LOG: &str = "queue-log";
 
 /// API 请求超时：GPT 同步出图实测约 40 秒，给 10 分钟
 const API_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// 图片下载总超时：实测 3.3 MB 约 65 秒，给足 20 分钟，靠进度让用户看到在动
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -122,6 +123,11 @@ pub struct Task {
     /// 改自原记录多合一的第几张（从 1 开始），用于显示「改自 #7-2」
     #[serde(default)]
     pub parent_part: Option<u32>,
+    /// 下载进度：已下载字节与总字节（下载中有效）
+    #[serde(default)]
+    pub download_bytes: u64,
+    #[serde(default)]
+    pub download_total: Option<u64>,
 }
 
 /// 给没有序号的记录按创建时间补号，并补全「改自」的原记录序号与切片号。
@@ -203,9 +209,19 @@ impl Task {
 
     pub fn generated(&mut self, urls: Vec<String>) -> Transition {
         expect(self, &[TaskStatus::Generating], "进入下载")?;
+        self.download_bytes = 0;
+        self.download_total = None;
         self.result_urls = urls;
         self.status = TaskStatus::Downloading;
         self.progress = 100;
+        Ok(())
+    }
+
+    /// 下载进度（多张结果时是累计字节）
+    pub fn set_download_progress(&mut self, bytes: u64, total: Option<u64>) -> Transition {
+        expect(self, &[TaskStatus::Downloading], "更新下载进度")?;
+        self.download_bytes = bytes;
+        self.download_total = total;
         Ok(())
     }
 
@@ -268,6 +284,8 @@ impl Task {
         self.status = TaskStatus::Downloading;
         self.error = None;
         self.finished_at = None;
+        self.download_bytes = 0;
+        self.download_total = None;
         Ok(())
     }
 
@@ -297,7 +315,7 @@ impl Task {
     pub fn label(&self) -> String {
         let short: String = self.prompt.chars().take(16).collect();
         let more = if self.prompt.chars().count() > 16 { "…" } else { "" };
-        format!("「{short}{more}」#{}", self.seq)
+        format!("#{} 「{short}{more}」", self.number)
     }
 }
 
@@ -362,6 +380,8 @@ pub fn build_task(req: &EnqueueRequest, now: i64, upscale: bool, mut next_id: im
         number: 0,
         parent_number: None,
         parent_part: None,
+        download_bytes: 0,
+        download_total: None,
     })
 }
 
@@ -776,15 +796,25 @@ impl Queue {
             {
                 name = format!("{stem}-宫格.{ext}");
             }
-            let dest = match download::reserve_unique(&dir, &name) {
+            let (dest, part) = match download::reserve_download(&dir, &name) {
                 Ok(p) => p,
                 Err(e) => {
                     self.finish_download_failed(&task, format!("无法在输出目录创建文件：{e}"));
                     return;
                 }
             };
-            if let Err(e) = download::download(&client, url, &dest).await {
-                let _ = std::fs::remove_file(&dest);
+            // 推进度：每变化 1% 或每 256 KB 推一次（不写盘）
+            let mut last = (u64::MAX, 0u64);
+            let result = download::download(&client, url, &part, &dest, |bytes, total| {
+                let pct = total.map(|t| bytes * 100 / t.max(1)).unwrap_or(u64::MAX);
+                if pct != last.0 || bytes >= last.1 + 256 * 1024 || bytes == 0 {
+                    last = (pct, bytes);
+                    self.update(id, false, |t| t.set_download_progress(bytes, total));
+                }
+            })
+            .await;
+            if let Err(e) = result {
+                let _ = std::fs::remove_file(&part);
                 for f in &files {
                     let _ = std::fs::remove_file(f);
                 }
@@ -1168,7 +1198,14 @@ mod tests {
             println!("生成用时 {:?}，{}", started.elapsed(), urls[0]);
             let dest = out.join("composite-宫格.png");
             let dl = build_client(&crate::settings::ProxySettings::default(), false, DOWNLOAD_TIMEOUT).unwrap();
-            download::download(&dl, &urls[0], &dest).await.unwrap();
+            let part = download::part_path(&dest);
+            download::download(&dl, &urls[0], &part, &dest, |b, t| {
+                if b > 0 && (b % (512 * 1024) < 16 * 1024) {
+                    println!("下载 {b} / {t:?}");
+                }
+            })
+            .await
+            .unwrap();
             println!("合成图 {:?}", image::open(&dest).unwrap().dimensions());
             for p in split_composites(&[dest.to_string_lossy().to_string()], &plan, &out).unwrap() {
                 println!("{p} {:?}", image::open(&p).unwrap().dimensions());

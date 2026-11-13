@@ -53,6 +53,13 @@ export function taskNo(task: { number: number; files: string[] }, file?: string)
   return i >= 0 ? `#${task.number}-${i + 1}` : `#${task.number}`;
 }
 
+/** 字节数 → 「1.5 MB」 */
+export function bytesText(n: number) {
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
+}
+
 export const sizeText = ([w, h]: [number, number]) => (w && h ? `${w}×${h}` : "自动");
 
 /** 参数摘要，用于任务行与图库 */

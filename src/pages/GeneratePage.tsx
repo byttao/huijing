@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ClearOutlined, KeyOutlined, PictureOutlined, SettingOutlined } from "@ant-design/icons";
-import { Alert, App as AntApp, Button, Checkbox, Form, Input, Segmented, Select, Typography } from "antd";
+import { ClearOutlined, DownOutlined, KeyOutlined, PictureOutlined, SettingOutlined } from "@ant-design/icons";
+import { Alert, App as AntApp, Button, Checkbox, Collapse, Form, Input, Segmented, Select, Typography } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   DropZone,
@@ -22,8 +22,9 @@ import {
 } from "../ui-kit";
 import { gptRatioOptions, nanoRatioOptions } from "../components/Ratio";
 import { TaskRow } from "../components/TaskRow";
+import { LogActions } from "../components/LogActions";
 import { api, errorText } from "../lib/api";
-import { BACKGROUNDS, IMAGE_SIZES, MODELS, MODES, OUTPUT_FORMATS, isActive, shortPrompt, sizeText } from "../lib/options";
+import { BACKGROUNDS, IMAGE_SIZES, MODELS, MODES, OUTPUT_FORMATS, isActive, shortPrompt, sizeText, taskNo } from "../lib/options";
 import type { EditRequest, GenParams, GridPlan, Mode, ModelId, SettingsView, Task } from "../lib/types";
 
 const IS_MAC = /Mac/i.test(navigator.userAgent);
@@ -57,6 +58,18 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
   const [editSource, setEditSource] = useState<{ task: Task; file: string } | null>(null);
   const [plan, setPlan] = useState<GridPlan | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
+  // 选了张数 / 排法后把宫格预览滚到可见（小窗口下预览在折叠线以下）
+  const previewRef = useRef<HTMLDivElement>(null);
+  const revealPreview = () => window.setTimeout(() => previewRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 80);
+  // 预览不在可视区时，在卡片标题栏给一个「比例与张数 ↓」入口（否则看不出下面还有参数）
+  const [previewVisible, setPreviewVisible] = useState(true);
+  useEffect(() => {
+    const el = previewRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(([entry]) => setPreviewVisible(entry.isIntersecting), { threshold: 0.6 });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const [submitting, setSubmitting] = useState(false);
 
   // 首次拿到设置时套用默认模型与参数
@@ -77,12 +90,13 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
     const { task, file } = editRequest;
     setEditSource({ task, file });
     setMode("edit");
+    // 改的是其中一张：张数回到 1 张，其余沿用原任务参数
+    setCount(1);
     setModel(task.model);
     if (task.model === "gpt-image-2.6") setGptParams(task.params);
     else setNanoParams(task.params);
     setPrompt(task.prompt);
-    const which = task.files.length > 1 ? `第 ${task.files.indexOf(file) + 1} 张` : "结果图";
-    log(`继续修改「${shortPrompt(task.prompt)}」：已带入${which}与原参数，改好提示词后加入队列。`);
+    log(`继续修改 ${taskNo(task, file)}「${shortPrompt(task.prompt)}」：已带入这张图与原参数（张数重置为 1 张），改好提示词后加入队列。`);
   }, [editRequest, log]);
 
   // 首次载入时记一条摘要（恢复中断任务的详情由 Rust 端日志补上）
@@ -167,7 +181,8 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
         count,
         parentId: mode === "edit" && editSource ? editSource.task.id : null,
       });
-      log(`已加入队列：「${shortPrompt(prompt.trim())}」${count > 1 ? `· ${count} 合 1（${created[0]?.grid?.cols}×${created[0]?.grid?.rows} 宫格）` : ""}`, "info");
+      const t = created[0];
+      log(`已加入队列：#${t?.number} 「${shortPrompt(prompt.trim())}」${count > 1 ? `· ${count} 合 1（${t?.grid?.cols}×${t?.grid?.rows} 宫格，切片为 #${t?.number}-1 …）` : ""}`, "info");
       message.success(count > 1 ? `已加入队列 · ${count} 合 1（1 次请求）` : "已加入队列 · 1 张");
     } catch (err) {
       log(`加入队列失败：${errorText(err)}`, "error");
@@ -257,7 +272,18 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
         aside={
           <>
             {/* 参数卡片内部滚动；主按钮在 asideFooter 常驻 */}
-            <Panel fill title="出图参数" className="min-h-0 flex-1">
+            <Panel
+              fill
+              title="出图参数"
+              className="min-h-0 flex-1"
+              extra={
+                !previewVisible && (
+                  <Button type="link" size="small" icon={<DownOutlined />} iconPlacement="end" onClick={revealPreview}>
+                    比例与张数
+                  </Button>
+                )
+              }
+            >
               <SettingsScroll>
                 <Form layout="vertical" component="div" className="flex flex-col gap-3">
                   <Segmented block options={MODES} value={mode} onChange={(v) => setMode(v as Mode)} />
@@ -280,7 +306,8 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                           submit();
                         }
                       }}
-                      autoSize={{ minRows: 4, maxRows: 9 }}
+                      allowClear
+                      autoSize={{ minRows: 3, maxRows: 8 }}
                       placeholder={mode === "text" ? "描述你想要的画面，例如：清晨的江南水乡，水墨淡彩" : "描述要怎么改，例如：换成黄昏的光线，保留人物姿态"}
                       maxLength={4000}
                     />
@@ -305,10 +332,9 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                     (editSource ? (
                       <Form.Item label="修改来源">
                         <div className="flex items-center gap-2">
-                          <Thumb path={editSource.file} size="md" alt={editSource.task.prompt} />
+                          <Thumb path={editSource.file} size="md" fit="contain" alt={editSource.task.prompt} />
                           <Typography.Paragraph type="secondary" ellipsis={{ rows: 3, tooltip: editSource.task.prompt }} className="m-0 min-w-0 flex-1 text-sm">
-                            {editSource.task.files.length > 1 && `第 ${editSource.task.files.indexOf(editSource.file) + 1} 张 · `}
-                            {editSource.task.prompt}
+                            {taskNo(editSource.task, editSource.file)} · {editSource.task.prompt}
                           </Typography.Paragraph>
                         </div>
                       </Form.Item>
@@ -316,32 +342,20 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                       <FieldHint>在左侧队列或「图库」里，对已完成的图点「继续修改」。</FieldHint>
                     ))}
 
+                  {/* 比例、张数、排法与宫格预览放在一起 */}
                   {model === "gpt-image-2.6" ? (
-                    <>
-                      <Form.Item label="比例 / 尺寸">
-                        <Select value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={gptRatioOptions} />
-                      </Form.Item>
-                      <Form.Item label="背景">
-                        <Segmented block options={BACKGROUNDS} value={params.background} onChange={(v) => setParams({ background: String(v) })} />
-                      </Form.Item>
-                      <Form.Item label="输出格式">
-                        <Segmented
-                          block
-                          options={OUTPUT_FORMATS}
-                          value={params.outputFormat || "png"}
-                          onChange={(v) => setParams({ outputFormat: String(v) })}
-                        />
-                      </Form.Item>
-                    </>
+                    <Form.Item label="比例 / 尺寸">
+                      <Select value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={gptRatioOptions} />
+                    </Form.Item>
                   ) : (
-                    <>
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                       <Form.Item label="比例">
                         <Select value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={nanoRatioOptions} />
                       </Form.Item>
                       <Form.Item label="分辨率">
-                        <Segmented block options={IMAGE_SIZES} value={params.imageSize || "1K"} onChange={(v) => setParams({ imageSize: String(v) })} />
+                        <Segmented options={IMAGE_SIZES} value={params.imageSize || "1K"} onChange={(v) => setParams({ imageSize: String(v) })} />
                       </Form.Item>
-                    </>
+                    </div>
                   )}
 
                   <Form.Item
@@ -350,17 +364,26 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                       multiBlocked ? (
                         <FieldHint type="warning">{multiBlocked}</FieldHint>
                       ) : count > 1 ? (
-                        `整张图仍是所选比例，一次请求画 ${count} 个方案、只扣一次费，下载后按宫格等分拆成 ${count} 张`
+                        `一次请求画 ${count} 个方案、只扣一次费，按宫格等分拆成 ${count} 张`
                       ) : (
                         "选 2–4 张时在一张图里按宫格画多个方案，再等分拆切"
                       )
                     }
                   >
-                    <Segmented block options={COUNTS} value={count} disabled={!!multiBlocked} onChange={(v) => setCount(Number(v))} />
+                    <Segmented
+                      block
+                      options={COUNTS}
+                      value={count}
+                      disabled={!!multiBlocked}
+                      onChange={(v) => {
+                        setCount(Number(v));
+                        revealPreview();
+                      }}
+                    />
                   </Form.Item>
 
                   {(count === 2 || count === 3) && (
-                    <Form.Item label="排法" extra="默认取每张更接近方形的一种：横图并排、竖图上下叠">
+                    <Form.Item label="排法">
                       <Segmented
                         block
                         options={[
@@ -368,58 +391,85 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                           { value: "column", label: `竖排 1×${count}` },
                         ]}
                         value={plan?.orientation || "row"}
-                        onChange={(v) => setParams({ layout: String(v) })}
+                        onChange={(v) => {
+                          setParams({ layout: String(v) });
+                          revealPreview();
+                        }}
                       />
                     </Form.Item>
                   )}
 
-                  {model === "nano-banana-2.1" && count > 1 && (
-                    <Form.Item
-                      extra={
-                        params.imageSize === "4K" ? (
-                          <FieldHint>已是最高档 4K，无法再升档</FieldHint>
-                        ) : (
-                          <FieldHint type="warning">选 1K 时用 2K 请求，切出来每张像素更多、少靠放大（4 合 1 时正好是原生 1K）。高档位单价可能更高</FieldHint>
-                        )
-                      }
-                    >
-                      <Checkbox checked={params.higherRes} disabled={params.imageSize === "4K"} onChange={(e) => setParams({ higherRes: e.target.checked })}>
-                        合图使用更高一档分辨率
-                      </Checkbox>
+                  <div ref={previewRef}>
+                    <Form.Item label={count > 1 ? "预览 · 宫格与尺寸" : "预览"}>
+                      {plan ? (
+                        <RatioPreview
+                          ratio={plan.requestRatio}
+                          cols={plan.cols}
+                          rows={plan.rows}
+                          height={80}
+                          autoText={
+                            plan.count > 1
+                              ? `比例为「自动」：由模型决定整张图的比例，按 ${plan.cols} 列 × ${plan.rows} 行等分拆切，每张比例取决于实际出图`
+                              : "比例为「自动」：由模型决定画面比例，尺寸出图后才知道"
+                          }
+                          caption={<PlanCaption plan={plan} />}
+                        />
+                      ) : (
+                        planError && <FieldHint type="warning">{planError}</FieldHint>
+                      )}
                     </Form.Item>
-                  )}
+                  </div>
 
-                  <Form.Item label={count > 1 ? "预览 · 宫格与尺寸" : "预览"}>
-                    {plan ? (
-                      <RatioPreview
-                        ratio={plan.requestRatio}
-                        cols={plan.cols}
-                        rows={plan.rows}
-                        autoText={
-                          plan.count > 1
-                            ? `比例为「自动」：由模型决定整张图的比例，按 ${plan.cols} 列 × ${plan.rows} 行等分拆切，每张比例取决于实际出图`
-                            : "比例为「自动」：由模型决定画面比例，尺寸出图后才知道"
-                        }
-                        caption={
-                          <span className="flex flex-col">
-                            <span>
-                              整张 {plan.requestRatio}
-                              {plan.requestTier ? ` · ${plan.requestTier}` : ""} · 约 {sizeText(plan.requestSize)}
-                              {plan.count > 1 && ` · ${plan.cols} 列 × ${plan.rows} 行`}
-                            </span>
-                            {plan.count > 1 && (
-                              <span className="text-text-secondary">
-                                拆切后每张约 {plan.cellRatio}（约 {sizeText(plan.cellSize)}）
-                                {plan.upscale && plan.outputSize[0] !== plan.cellSize[0] && `，放大到约 ${sizeText(plan.outputSize)}`}
-                              </span>
+                  <Collapse
+                    ghost
+                    size="small"
+                    className="-mx-3 [&_.ant-collapse-content-box]:pt-0"
+                    items={[
+                      {
+                        key: "advanced",
+                        label: model === "gpt-image-2.6" ? "高级 · 背景与输出格式" : "高级 · 合图分辨率",
+                        children: (
+                          <div className="flex flex-col gap-3">
+                            {model === "gpt-image-2.6" ? (
+                              <>
+                                <Form.Item label="背景">
+                                  <Segmented block options={BACKGROUNDS} value={params.background} onChange={(v) => setParams({ background: String(v) })} />
+                                </Form.Item>
+                                <Form.Item label="输出格式">
+                                  <Segmented
+                                    block
+                                    options={OUTPUT_FORMATS}
+                                    value={params.outputFormat || "png"}
+                                    onChange={(v) => setParams({ outputFormat: String(v) })}
+                                  />
+                                </Form.Item>
+                              </>
+                            ) : (
+                              <Form.Item
+                                extra={
+                                  count === 1 ? (
+                                    <FieldHint>只在多合一（2–4 张）时生效</FieldHint>
+                                  ) : params.imageSize === "4K" ? (
+                                    <FieldHint>已是最高档 4K，无法再升档</FieldHint>
+                                  ) : (
+                                    <FieldHint type="warning">选 1K 时用 2K 请求，切出来每张像素更多、少靠放大（4 合 1 时正好是原生 1K）。高档位单价可能更高</FieldHint>
+                                  )
+                                }
+                              >
+                                <Checkbox
+                                  checked={params.higherRes}
+                                  disabled={params.imageSize === "4K" || count === 1}
+                                  onChange={(e) => setParams({ higherRes: e.target.checked })}
+                                >
+                                  合图使用更高一档分辨率
+                                </Checkbox>
+                              </Form.Item>
                             )}
-                          </span>
-                        }
-                      />
-                    ) : (
-                      planError && <FieldHint type="warning">{planError}</FieldHint>
-                    )}
-                  </Form.Item>
+                          </div>
+                        ),
+                      },
+                    ]}
+                  />
                 </Form>
               </SettingsScroll>
             </Panel>
@@ -483,9 +533,31 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
         </Panel>
       </Workspace>
 
-      <Panel fill title="出图日志" size="small" className="h-[170px] shrink-0">
-        <LogViewer logs={logs} onClear={clear} emptyText="加入队列后，生成与下载过程会显示在这里" />
+      <Panel fill title="出图日志" size="small" className="h-[170px] shrink-0" extra={<LogActions logs={logs} onClear={clear} />}>
+        <LogViewer logs={logs} emptyText="加入队列后，生成与下载过程会显示在这里" />
       </Panel>
     </Page>
+  );
+}
+
+/** 预览框下的尺寸说明：整张尺寸；多合一时每张比例与尺寸，以及是否放大 */
+function PlanCaption({ plan }: { plan: GridPlan }) {
+  return (
+    <span className="flex flex-col">
+      <span>
+        整张 {plan.requestRatio}
+        {plan.requestTier ? ` · ${plan.requestTier}` : ""} · 约 {sizeText(plan.requestSize)}
+        {plan.count > 1 && ` · ${plan.cols} 列 × ${plan.rows} 行`}
+      </span>
+      {plan.count > 1 && (
+        <span className="text-text-secondary">
+          拆切后每张约 {plan.cellRatio}（约 {sizeText(plan.cellSize)}）
+          {plan.upscale &&
+            (plan.outputSize[0] !== plan.cellSize[0] || plan.outputSize[1] !== plan.cellSize[1]
+              ? `，放大到约 ${sizeText(plan.outputSize)}`
+              : "，长边已等于整张图长边，不再放大")}
+        </span>
+      )}
+    </span>
   );
 }

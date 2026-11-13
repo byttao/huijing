@@ -19,6 +19,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { LogViewer, Page, Panel, SettingsScroll, SettingsSection, ThemePicker, Workspace, useLogger, useTheme, type ThemeMode } from "../ui-kit";
 import brandMark from "../assets/brand-mark.png";
+import { LogActions } from "../components/LogActions";
 import { api, errorText } from "../lib/api";
 import { BACKGROUNDS, IMAGE_SIZES, MODELS, OUTPUT_FORMATS } from "../lib/options";
 import { gptRatioOptions, nanoRatioOptions } from "../components/Ratio";
@@ -311,8 +312,8 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
         </Panel>
       </Workspace>
 
-      <Panel fill title="设置日志" size="small" className="h-[170px] shrink-0">
-        <LogViewer logs={logs} onClear={clear} emptyText="测试连接、保存设置的结果会显示在这里" />
+      <Panel fill title="设置日志" size="small" className="h-[170px] shrink-0" extra={<LogActions logs={logs} onClear={clear} />}>
+        <LogViewer logs={logs} emptyText="测试连接、保存设置的结果会显示在这里" />
       </Panel>
     </Page>
   );

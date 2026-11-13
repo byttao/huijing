@@ -40,23 +40,64 @@ pub fn ext_from_url(url: &str, fallback: &str) -> String {
     }
 }
 
-/// 下载一张图到 `dest`，失败自动重试 3 次。先写 .part 再改名，避免留下半截文件。
-pub async fn download(client: &reqwest::Client, url: &str, dest: &Path) -> Result<(), String> {
+/// 为一次下载占位：返回 (最终路径, 临时路径 `最终路径.part`)。
+/// 最终文件名不与已有文件重名；临时文件用 create_new 原子占住，避免并发任务撞名。
+/// 下载过程中文件夹里只有 `xxx.png.part`，完成后才原子改名成 `xxx.png`，不会出现打不开的半截 PNG。
+pub fn reserve_download(dir: &Path, name: &str) -> std::io::Result<(PathBuf, PathBuf)> {
+    std::fs::create_dir_all(dir)?;
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), format!(".{e}")),
+        None => (name.to_string(), String::new()),
+    };
+    for i in 1u32.. {
+        let dest = if i == 1 { dir.join(name) } else { dir.join(format!("{stem} ({i}){ext}")) };
+        if dest.exists() {
+            continue;
+        }
+        let part = part_path(&dest);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&part) {
+            Ok(_) => return Ok((dest, part)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!()
+}
+
+/// `a/b.png` → `a/b.png.part`
+pub fn part_path(dest: &Path) -> PathBuf {
+    let mut s = dest.as_os_str().to_owned();
+    s.push(".part");
+    PathBuf::from(s)
+}
+
+/// 流式下载到 `part`，完成后原子改名为 `dest`；失败自动重试 3 次。
+/// `on_progress(已下载字节, 总字节)` 随下载推进调用（总字节取自 Content-Length，可能没有）。
+pub async fn download(
+    client: &reqwest::Client,
+    url: &str,
+    part: &Path,
+    dest: &Path,
+    mut on_progress: impl FnMut(u64, Option<u64>),
+) -> Result<(), String> {
     let mut last_err = String::new();
     for attempt in 0..3 {
         if attempt > 0 {
             tokio::time::sleep(Duration::from_secs(2 * attempt)).await;
         }
-        match try_download(client, url, dest).await {
-            Ok(()) => return Ok(()),
+        match try_download(client, url, part, &mut on_progress).await {
+            Ok(()) => {
+                return tokio::fs::rename(part, dest).await.map_err(|e| format!("保存文件失败：{e}"));
+            }
             Err(e) => last_err = e,
         }
     }
     Err(last_err)
 }
 
-async fn try_download(client: &reqwest::Client, url: &str, dest: &Path) -> Result<(), String> {
-    let resp = client.get(url).send().await.map_err(|e| describe(&e))?;
+async fn try_download(client: &reqwest::Client, url: &str, part: &Path, on_progress: &mut impl FnMut(u64, Option<u64>)) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    let mut resp = client.get(url).send().await.map_err(|e| describe(&e))?;
     let status = resp.status();
     if !status.is_success() {
         return Err(if status.as_u16() == 404 {
@@ -65,16 +106,20 @@ async fn try_download(client: &reqwest::Client, url: &str, dest: &Path) -> Resul
             format!("HTTP {status}")
         });
     }
-    let bytes = resp.bytes().await.map_err(|e| describe(&e))?;
-    if bytes.is_empty() {
+    let total = resp.content_length().filter(|&n| n > 0);
+    let mut file = tokio::fs::File::create(part).await.map_err(|e| format!("写入文件失败：{e}"))?;
+    let mut done = 0u64;
+    on_progress(0, total);
+    while let Some(chunk) = resp.chunk().await.map_err(|e| describe(&e))? {
+        file.write_all(&chunk).await.map_err(|e| format!("写入文件失败：{e}"))?;
+        done += chunk.len() as u64;
+        on_progress(done, total);
+    }
+    file.flush().await.map_err(|e| format!("写入文件失败：{e}"))?;
+    if done == 0 {
         return Err("下载到的文件为空".into());
     }
-    if let Some(dir) = dest.parent() {
-        tokio::fs::create_dir_all(dir).await.map_err(|e| format!("创建输出目录失败：{e}"))?;
-    }
-    let part = dest.with_extension("part");
-    tokio::fs::write(&part, &bytes).await.map_err(|e| format!("写入文件失败：{e}"))?;
-    tokio::fs::rename(&part, dest).await.map_err(|e| format!("保存文件失败：{e}"))
+    Ok(())
 }
 
 fn describe(err: &reqwest::Error) -> String {
@@ -106,6 +151,23 @@ mod tests {
         assert_eq!(reserve_unique(&dir, "x.png").unwrap(), dir.join("x.png"));
         assert_eq!(reserve_unique(&dir, "x.png").unwrap(), dir.join("x (2).png"));
         assert_eq!(reserve_unique(&dir, "x.png").unwrap(), dir.join("x (3).png"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reserve_download_uses_part_file() {
+        let dir = std::env::temp_dir().join(format!("huijing-part-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (dest, part) = reserve_download(&dir, "a.png").unwrap();
+        assert_eq!(dest, dir.join("a.png"));
+        assert_eq!(part, dir.join("a.png.part"));
+        assert!(part.exists() && !dest.exists(), "下载中只有 .part，没有最终文件");
+        // 同名的 .part 被占住时换下一个名字
+        let (dest2, _) = reserve_download(&dir, "a.png").unwrap();
+        assert_eq!(dest2, dir.join("a (2).png"));
+        // 已有最终文件也不覆盖
+        std::fs::write(dir.join("b.png"), b"1").unwrap();
+        assert_eq!(reserve_download(&dir, "b.png").unwrap().0, dir.join("b (2).png"));
         let _ = std::fs::remove_dir_all(dir);
     }
 

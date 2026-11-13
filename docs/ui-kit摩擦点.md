@@ -72,3 +72,10 @@
 6. **`Thumb` 的 antd `Image` 带 `role="button"`**：`ListRow` 里同时有可点击的 Tag（`role="button"`）时，按 role 选元素会先选到缩略图；不算 bug，但「可点击标签」仍没有 kit 写法（见七·3）。
 7. **深色下 `Descriptions` 里带 `copyable` 的长路径偶尔不省略**：设置页「数据目录」在一次离屏截图里没有显示省略号，而是在单词中间折行（Applicat / ion）；浅色正常。只复现过一次，未确认是否与 kit 有关，先记下。
 8. **`RatioPreview` 的 `cellRatio` 语义随绘境改了**：1.3 的文档按「合成比例 + 每格裁切」写（第二轮旧逻辑），绘境第三轮起整张比例不变、只等分，所以不传 `cellRatio`，每张比例写在 `caption` 里。若 kit 想覆盖「等分拆切」这类用法，可以加一个「每格比例」标注而不是裁切框。
+
+## 九、第五轮（真实窗口验收后的修复）新增
+
+1. **`LogViewer` 的浮动工具条会盖住长日志行的末尾**：传 `onClear` / `copyable` 时，「复制全部」「清空」浮在日志区右上角，长行的最后几个字被挡住；又没有把按钮放到 `Panel extra` 的选项。绘境改为不传 `onClear`，自己在 Panel 的 `extra` 放两个按钮（`src/components/LogActions.tsx`，复制用 kit 导出的 `logsToText`）。建议 `LogViewer` 提供 `toolbar="extra"`，或单独导出一个 `LogToolbar` 给 `Panel extra` 用；至少给日志区留出右侧内边距。
+2. **`ImageGrid` 没有 `fit` 参数**：瓦片里的图固定 `object-cover`，1376×383 这类长条切片被裁成方块，看不出形状。绘境从外层用 `className="[&_img]:object-contain"` 改成完整显示（瓦片底色作留白）。建议加 `fit="cover" | "contain"`（`Thumb` 已经有）。
+3. **`SettingsScroll` 没有「下面还有内容」的提示，也拿不到滚动容器**：最小窗口下参数卡片只露出模式、模型、提示词，看不出能滚。绘境用 IntersectionObserver 观察预览块，不可见时在 Panel 标题栏放「比例与张数 ↓」入口，选张数 / 排法后 `scrollIntoView`。建议 `SettingsScroll` 支持 `ref`，并提供可选的底部渐隐 / 「更多」提示。
+4. **右栏参数的「高级」折叠没有约定**：低频参数收进 antd `Collapse ghost`，需要 `-mx-3` 抵消左右内边距才能与其他表单项对齐；kit 可以给一个 `SettingsSection` 的可折叠变体。

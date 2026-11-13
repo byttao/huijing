@@ -13,7 +13,7 @@ import {
 } from "@ant-design/icons";
 import { Button, Dropdown, Image, Progress, Tag, Tooltip, Typography, type MenuProps } from "antd";
 import { ListRow, StatusTag, Thumb } from "../ui-kit";
-import { formatTime, isActive, modeLabel, modelLabel, paramsSummary, shortPrompt } from "../lib/options";
+import { bytesText, formatTime, isActive, modeLabel, modelLabel, paramsSummary, shortPrompt } from "../lib/options";
 import type { Task } from "../lib/types";
 
 export interface TaskActions {
@@ -35,6 +35,16 @@ interface TaskRowProps extends TaskActions {
   onJumpParent?: (task: Task) => void;
 }
 
+/** 「下载中 45% · 1.5 / 3.3 MB」；还没拿到总大小时只写已下载 */
+function downloadText(task: Task) {
+  if (!task.downloadBytes) return "下载中";
+  if (task.downloadTotal) {
+    const pct = Math.floor((task.downloadBytes / task.downloadTotal) * 100);
+    return `下载中 ${pct}% · ${bytesText(task.downloadBytes)} / ${bytesText(task.downloadTotal)}`;
+  }
+  return `下载中 · ${bytesText(task.downloadBytes)}`;
+}
+
 /** 绘境任务状态 → kit StatusTag */
 function TaskStatus({ task }: { task: Task }) {
   switch (task.status) {
@@ -43,7 +53,7 @@ function TaskStatus({ task }: { task: Task }) {
     case "generating":
       return <StatusTag status="processing">{task.remoteId ? `生成中 ${task.progress}%` : "生成中"}</StatusTag>;
     case "downloading":
-      return <StatusTag status="processing">下载中</StatusTag>;
+      return <StatusTag status="processing">{downloadText(task)}</StatusTag>;
     case "succeeded":
       return <StatusTag status="success" />;
     case "failed":
@@ -93,6 +103,7 @@ export function TaskRow({ task, parent, highlighted, onJumpParent, onEdit, onRet
         <Thumb
           path={cover}
           size="md"
+          fit="contain"
           loading={task.status === "generating" || task.status === "downloading"}
           open={previewOpen}
           onOpenChange={setPreviewOpen}
@@ -136,6 +147,15 @@ export function TaskRow({ task, parent, highlighted, onJumpParent, onEdit, onRet
           {task.status === "generating" && task.remoteId && (
             <Progress percent={task.progress} size="small" showInfo={false} status="active" className="m-0 max-w-[320px]" />
           )}
+          {task.status === "downloading" && task.downloadTotal ? (
+            <Progress
+              percent={Math.floor((task.downloadBytes / task.downloadTotal) * 100)}
+              size="small"
+              showInfo={false}
+              status="active"
+              className="m-0 max-w-[320px]"
+            />
+          ) : null}
           {task.error && <Typography.Text className="text-sm">{task.error}</Typography.Text>}
           {task.notice && <Typography.Text type="warning" className="text-sm">{task.notice}</Typography.Text>}
           {parts.length > 0 && <PartStrip number={task.number} parts={parts} />}
@@ -200,7 +220,7 @@ function PartStrip({ number, parts }: { number: number; parts: string[] }) {
       <div className="flex flex-wrap gap-1.5">
         {parts.map((p, i) => (
           <span key={p} className="flex flex-col items-center gap-0.5">
-            <Thumb path={p} size="sm" alt={`#${number}-${i + 1}`} />
+            <Thumb path={p} size="sm" fit="contain" alt={`#${number}-${i + 1}`} />
             <span className="text-sm tabular-nums text-text-tertiary">
               #{number}-{i + 1}
             </span>

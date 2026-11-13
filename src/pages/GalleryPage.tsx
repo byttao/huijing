@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AppstoreOutlined, CopyOutlined, DeleteOutlined, EyeOutlined, FolderOpenOutlined, PictureOutlined } from "@ant-design/icons";
 import { App as AntApp, Button, Descriptions, Segmented, Typography } from "antd";
 import { EmptyState, ImageGrid, ListWell, LogViewer, Page, Panel, Thumb, Workspace, fileName, useLogger } from "../ui-kit";
+import { LogActions } from "../components/LogActions";
 import { api, errorText } from "../lib/api";
 import { formatTime, modeLabel, modelLabel, paramsSummary, shortPrompt, taskNo } from "../lib/options";
 import type { ModelId, Task } from "../lib/types";
@@ -223,6 +224,8 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
                   alt: `${taskNo(i.task, i.file)} ${i.task.prompt}`,
                   badge: <span className="rounded-sm border bg-container px-1 text-sm tabular-nums text-text-secondary">{taskNo(i.task, i.file)}</span>,
                 }))}
+                // 长条切片（如 1376×383）完整显示、四周留底色：ImageGrid 没有 fit 参数，从外层改 img 的 object-fit
+                className="[&_img]:object-contain"
                 selectedKey={selected?.key}
                 onSelect={setSelectedKey}
                 previewIndex={previewIndex}
@@ -233,8 +236,8 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
         </Panel>
       </Workspace>
 
-      <Panel fill title="图库日志" size="small" className="h-[170px] shrink-0">
-        <LogViewer logs={logs} onClear={clear} emptyText="在这里查看复制、打开文件夹等操作记录" />
+      <Panel fill title="图库日志" size="small" className="h-[170px] shrink-0" extra={<LogActions logs={logs} onClear={clear} />}>
+        <LogViewer logs={logs} emptyText="在这里查看复制、打开文件夹等操作记录" />
       </Panel>
     </Page>
   );
