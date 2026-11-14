@@ -88,3 +88,11 @@
 2. **`LogViewer` 浮动工具条遮挡长日志行（九·1）在 1.4.0 里仍未处理**：绘境继续用自写的 `LogActions` 放在 `Panel extra`。
 3. **`createMockTaskBackend` 只覆盖任务列表**：页面里其他 `invoke`（读设置、宫格规划等）在浏览器里仍要自己伪造 `__TAURI_INTERNALS__`。若配方 / demo 想支持「整页在浏览器里跑」，可以再给一个通用的 `createMockInvoke(handlers)`。
 4. **设置页配方的输入校验落到项目自己写**：这次实测发现「自定义代理 + 空地址」能被保存，保存后图片下载全部失败。绘境已补 `validateStatus` / `help` 并禁用保存（照配方写法），Rust 端加载设置时也会把无效的自定义代理回退为「不使用」。配方里若能放一个「依赖开关的必填字段」示例，更容易被照抄。
+
+## 十一、升级到 1.5.0 时新发现
+
+升级顺利：从 `v1.5.0` 标签 `git archive` 取内容覆盖，旧代码不改也能编译。已换用 kit `LogActions`（删除自写 `LogActions.tsx`）、`ImageGrid` / `ThumbStrip` 的 `fit="contain"`（删除外层 `[&_img]:object-contain`）、`SettingsScroll` 的 ref + 自带「下面还有」（删除 IntersectionObserver，标题栏「比例与张数 ↓」改为用 ref 把比例项滚到顶部）、`AdvancedSection`（带「已改 N 项」与「恢复默认」，删除 `Collapse` + `-mx-3`）。现在页面里没有为 kit 缺口保留的自写组件了。
+
+1. **「下面还有」按钮会盖住它下面那一行内容**：按钮浮在滚动区底部正中，没滚到底时会挡住底边那一行的几个字（出图参数里遮住预览说明「按 2 列 × 1 行等分拆切……」的中段、「高级」里的升档提示）。设置页里它正好落在「代理」分段控件右边，看上去像控件的一个选项。建议滚动区底部留出与按钮等高的内边距，或把按钮放到卡片底边线上 / 右下角。
+2. **`AdvancedSection` 的标题在 300px 右栏里容易换行**：标题 +「已改 N 项」+ 右侧「恢复默认」三者同一行，「高级 · 合图分辨率」这种带说明的标题会被挤成两行。绘境改为只写「高级」。建议文档提示右栏里标题保持两三个字，或给 `description` 放到第二行。
+3. **跳转入口要靠 `querySelector("#id")?.closest(".ant-form-item")`**：依赖 antd 内部类名；`SettingsScroll` 若能提供 `scrollToField(id)` 之类的方法会更稳。

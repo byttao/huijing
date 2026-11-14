@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ClearOutlined, DownOutlined, KeyOutlined, PictureOutlined, SettingOutlined } from "@ant-design/icons";
-import { Alert, App as AntApp, Button, Checkbox, Collapse, Form, Input, Segmented, Select, Typography } from "antd";
+import { Alert, App as AntApp, Button, Checkbox, Form, Input, Segmented, Select, Typography } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  AdvancedSection,
   DropZone,
   EmptyState,
   FieldHint,
   IMAGE_EXTENSIONS,
   ListWell,
+  LogActions,
   LogViewer,
   Page,
   Panel,
@@ -23,7 +25,6 @@ import {
   useRowFlash,
 } from "../ui-kit";
 import { TaskRow } from "../components/TaskRow";
-import { LogActions } from "../components/LogActions";
 import { api, errorText } from "../lib/api";
 import { BACKGROUNDS, GPT_RATIO_OPTIONS, IMAGE_SIZES, MODELS, MODES, NANO_RATIOS, OUTPUT_FORMATS, isActive, shortPrompt, sizeText, taskNo } from "../lib/options";
 import type { EditRequest, GenParams, GridPlan, Mode, ModelId, SettingsView, Task } from "../lib/types";
@@ -62,15 +63,11 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
   // 选了张数 / 排法后把宫格预览滚到可见（小窗口下预览在折叠线以下）
   const previewRef = useRef<HTMLDivElement>(null);
   const revealPreview = () => window.setTimeout(() => previewRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 80);
-  // 预览不在可视区时，在卡片标题栏给一个「比例与张数 ↓」入口（否则看不出下面还有参数）
-  const [previewVisible, setPreviewVisible] = useState(true);
-  useEffect(() => {
-    const el = previewRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(([entry]) => setPreviewVisible(entry.isIntersecting), { threshold: 0.6 });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+  // 参数卡片标题栏的「比例与张数 ↓」：用 SettingsScroll 的 ref 把比例那一项滚到顶部
+  // （「下面还有」的滚动提示由 SettingsScroll 自带）。antd Form.Item 不把 id 落到 DOM，id 给控件
+  const paramsScrollRef = useRef<HTMLDivElement>(null);
+  const jumpToSize = () =>
+    paramsScrollRef.current?.querySelector("#gen-ratio")?.closest(".ant-form-item")?.scrollIntoView({ behavior: "smooth", block: "start" });
   const [submitting, setSubmitting] = useState(false);
 
   // 首次拿到设置时套用默认模型与参数
@@ -153,6 +150,11 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
   useEffect(() => {
     if (multiBlocked && count > 1) setCount(1);
   }, [multiBlocked, count]);
+
+  // 「高级」里改过几项（相对默认值），以及一键恢复默认
+  const advancedChanged =
+    model === "gpt-image-2.6" ? Number(params.background !== "") + Number((params.outputFormat || "png") !== "png") : Number(params.higherRes);
+  const resetAdvanced = () => setParams(model === "gpt-image-2.6" ? { background: "", outputFormat: "png" } : { higherRes: false });
 
   const hasKey = !!settings?.settings.apiKey;
   const refImages = mode === "image" ? refs : mode === "edit" && editSource ? [editSource.file] : [];
@@ -276,14 +278,12 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
               title="出图参数"
               className="min-h-0 flex-1"
               extra={
-                !previewVisible && (
-                  <Button type="link" size="small" icon={<DownOutlined />} iconPlacement="end" onClick={revealPreview}>
-                    比例与张数
-                  </Button>
-                )
+                <Button type="link" size="small" icon={<DownOutlined />} iconPlacement="end" onClick={jumpToSize}>
+                  比例与张数
+                </Button>
               }
             >
-              <SettingsScroll>
+              <SettingsScroll ref={paramsScrollRef}>
                 <Form layout="vertical" component="div" className="flex flex-col gap-3">
                   <Segmented block options={MODES} value={mode} onChange={(v) => setMode(v as Mode)} />
 
@@ -344,12 +344,12 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                   {/* 比例、张数、排法与宫格预览放在一起 */}
                   {model === "gpt-image-2.6" ? (
                     <Form.Item label="比例 / 尺寸">
-                      <RatioSelect value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={GPT_RATIO_OPTIONS} />
+                      <RatioSelect id="gen-ratio" value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={GPT_RATIO_OPTIONS} />
                     </Form.Item>
                   ) : (
                     <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                       <Form.Item label="比例">
-                        <RatioSelect value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={NANO_RATIOS} />
+                        <RatioSelect id="gen-ratio" value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={NANO_RATIOS} />
                       </Form.Item>
                       <Form.Item label="分辨率">
                         <Segmented options={IMAGE_SIZES} value={params.imageSize || "1K"} onChange={(v) => setParams({ imageSize: String(v) })} />
@@ -419,56 +419,55 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                     </Form.Item>
                   </div>
 
-                  <Collapse
-                    ghost
-                    size="small"
-                    className="-mx-3 [&_.ant-collapse-content-box]:pt-0"
-                    items={[
-                      {
-                        key: "advanced",
-                        label: model === "gpt-image-2.6" ? "高级 · 背景与输出格式" : "高级 · 合图分辨率",
-                        children: (
-                          <div className="flex flex-col gap-3">
-                            {model === "gpt-image-2.6" ? (
-                              <>
-                                <Form.Item label="背景">
-                                  <Segmented block options={BACKGROUNDS} value={params.background} onChange={(v) => setParams({ background: String(v) })} />
-                                </Form.Item>
-                                <Form.Item label="输出格式">
-                                  <Segmented
-                                    block
-                                    options={OUTPUT_FORMATS}
-                                    value={params.outputFormat || "png"}
-                                    onChange={(v) => setParams({ outputFormat: String(v) })}
-                                  />
-                                </Form.Item>
-                              </>
-                            ) : (
-                              <Form.Item
-                                extra={
-                                  count === 1 ? (
-                                    <FieldHint>只在多合一（2–4 张）时生效</FieldHint>
-                                  ) : params.imageSize === "4K" ? (
-                                    <FieldHint>已是最高档 4K，无法再升档</FieldHint>
-                                  ) : (
-                                    <FieldHint type="warning">选 1K 时用 2K 请求，切出来每张像素更多、少靠放大（4 合 1 时正好是原生 1K）。高档位单价可能更高</FieldHint>
-                                  )
-                                }
-                              >
-                                <Checkbox
-                                  checked={params.higherRes}
-                                  disabled={params.imageSize === "4K" || count === 1}
-                                  onChange={(e) => setParams({ higherRes: e.target.checked })}
-                                >
-                                  合图使用更高一档分辨率
-                                </Checkbox>
-                              </Form.Item>
-                            )}
-                          </div>
-                        ),
-                      },
-                    ]}
-                  />
+                  {/* kit AdvancedSection：低频参数默认折叠，标题旁显示「已改 N 项」，右侧「恢复默认」 */}
+                  <AdvancedSection
+                    // 300px 右栏里标题 +「已改 N 项」+「恢复默认」放不下长标题，只写「高级」
+                    title="高级"
+                    changedCount={advancedChanged}
+                    extra={
+                      advancedChanged > 0 && (
+                        <Button type="link" size="small" onClick={resetAdvanced}>
+                          恢复默认
+                        </Button>
+                      )
+                    }
+                  >
+                    {model === "gpt-image-2.6" ? (
+                      <>
+                        <Form.Item label="背景">
+                          <Segmented block options={BACKGROUNDS} value={params.background} onChange={(v) => setParams({ background: String(v) })} />
+                        </Form.Item>
+                        <Form.Item label="输出格式">
+                          <Segmented
+                            block
+                            options={OUTPUT_FORMATS}
+                            value={params.outputFormat || "png"}
+                            onChange={(v) => setParams({ outputFormat: String(v) })}
+                          />
+                        </Form.Item>
+                      </>
+                    ) : (
+                      <Form.Item
+                        extra={
+                          count === 1 ? (
+                            <FieldHint>只在多合一（2–4 张）时生效</FieldHint>
+                          ) : params.imageSize === "4K" ? (
+                            <FieldHint>已是最高档 4K，无法再升档</FieldHint>
+                          ) : (
+                            <FieldHint type="warning">选 1K 时用 2K 请求，切出来每张像素更多、少靠放大（4 合 1 时正好是原生 1K）。高档位单价可能更高</FieldHint>
+                          )
+                        }
+                      >
+                        <Checkbox
+                          checked={params.higherRes}
+                          disabled={params.imageSize === "4K" || count === 1}
+                          onChange={(e) => setParams({ higherRes: e.target.checked })}
+                        >
+                          合图使用更高一档分辨率
+                        </Checkbox>
+                      </Form.Item>
+                    )}
+                  </AdvancedSection>
                 </Form>
               </SettingsScroll>
             </Panel>

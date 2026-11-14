@@ -160,8 +160,8 @@ export function TaskRow({ task, parent, highlighted, onJumpParent, onEdit, onRet
           {task.notice && <Typography.Text type="warning" className="text-sm">{task.notice}</Typography.Text>}
           {parts.length > 0 && (
             <ThumbStrip
-              // 长条切片完整显示：ThumbStrip 没有 fit 参数，从外层把 img 改成 contain
-              className="[&_img]:object-contain"
+              // 长条切片完整显示
+              fit="contain"
               items={parts.map((p, i) => ({ path: p, caption: `#${task.number}-${i + 1}`, alt: `#${task.number}-${i + 1}` }))}
             />
           )}

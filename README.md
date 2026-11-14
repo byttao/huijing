@@ -2,7 +2,7 @@
 
 桌面 AI 出图工具：对接 [GRSAI](https://grsai.com/zh/models) 的出图接口，支持**文生图 / 图生图 / 继续修改**三种模式，Rust 端任务队列并发出图并自动下载到本地。
 
-界面：Tauri 2 + React + TypeScript + Ant Design 6，按 [ui-kit](https://github.com/byttao/ui-kit)（v1.4.0，`src/ui-kit/`）规范搭建。后端：Rust（`src-tauri/src/`）。
+界面：Tauri 2 + React + TypeScript + Ant Design 6，按 [ui-kit](https://github.com/byttao/ui-kit)（v1.5.0，`src/ui-kit/`）规范搭建。后端：Rust（`src-tauri/src/`）。
 
 ## 功能
 

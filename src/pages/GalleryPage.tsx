@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AppstoreOutlined, CopyOutlined, DeleteOutlined, EyeOutlined, FolderOpenOutlined, PictureOutlined } from "@ant-design/icons";
 import { App as AntApp, Button, Descriptions, Segmented, Typography } from "antd";
-import { EmptyState, ImageBadge, ImageGrid, ListWell, LogViewer, Page, Panel, Thumb, Workspace, fileName, useLogger } from "../ui-kit";
-import { LogActions } from "../components/LogActions";
+import { EmptyState, ImageBadge, ImageGrid, ListWell, LogActions, LogViewer, Page, Panel, Thumb, Workspace, fileName, useLogger } from "../ui-kit";
 import { api, errorText } from "../lib/api";
 import { formatTime, modeLabel, modelLabel, paramsSummary, shortPrompt, taskNo } from "../lib/options";
 import type { ModelId, Task } from "../lib/types";
@@ -219,8 +218,8 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
                   alt: `${taskNo(i.task, i.file)} ${i.task.prompt}`,
                   badge: <ImageBadge>{taskNo(i.task, i.file)}</ImageBadge>,
                 }))}
-                // 长条切片（如 1376×383）完整显示、四周留底色：ImageGrid 没有 fit 参数，从外层改 img 的 object-fit
-                className="[&_img]:object-contain"
+                // 长条切片（如 1376×383）完整显示、四周留底色
+                fit="contain"
                 badgePlacement="top-left"
                 selectedKey={selected?.key}
                 onSelect={setSelectedKey}

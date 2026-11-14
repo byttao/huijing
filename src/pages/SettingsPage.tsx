@@ -17,9 +17,8 @@ import {
 } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { FieldHint, LogViewer, Page, Panel, RatioSelect, SettingsScroll, SettingsSection, ThemePicker, Workspace, useLogger, useTheme, type ThemeMode } from "../ui-kit";
+import { FieldHint, LogActions, LogViewer, Page, Panel, RatioSelect, SettingsScroll, SettingsSection, ThemePicker, Workspace, useLogger, useTheme, type ThemeMode } from "../ui-kit";
 import brandMark from "../assets/brand-mark.png";
-import { LogActions } from "../components/LogActions";
 import { api, errorText } from "../lib/api";
 import { BACKGROUNDS, GPT_RATIO_OPTIONS, IMAGE_SIZES, MODELS, NANO_RATIOS, OUTPUT_FORMATS } from "../lib/options";
 import type { GenParams, ProxyMode, Settings, SettingsView } from "../lib/types";
