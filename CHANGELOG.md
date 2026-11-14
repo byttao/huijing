@@ -1,6 +1,6 @@
 # 更新日志
 
-版本号同时写在 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`（单元测试 `versions_are_consistent` 保证三处一致）。推送 `v<版本>` 标签后 GitHub Actions 自动编译并发布 Release，Release 正文取本文件对应版本的章节。
+版本号同时写在 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`（单元测试 `versions_are_consistent` 保证三处一致）。发布用 `scripts/release.sh <版本>`（本机产物直接上传），Release 正文取本文件对应版本的章节。
 
 ## 0.1.1 · 2026-11-14
 
@@ -14,8 +14,8 @@
 
 ### 发布
 
-- 推送 `v*` 标签即自动编译并发布 Release：附件改用 ASCII 文件名 `Huijing_<版本>_universal.dmg`、`Huijing_<版本>_portable.exe`（GitHub 会丢掉附件名里的中文），Release 标题为「绘境 <版本>」，正文取本文件对应章节并附下载与安装说明。
-- 工作流会校验标签版本与 `tauri.conf.json` 版本一致，不一致则直接失败。
+- 新增 `scripts/release.sh <版本>`：用本机打好的产物创建 GitHub Release。校验工作区干净、三处版本与 CHANGELOG 一致后，把附件复制成 ASCII 文件名 `Huijing_<版本>_universal.dmg`、`Huijing_<版本>_portable.exe`（GitHub 会丢掉附件名里的中文，中文放在附件显示标签里），Release 标题为「绘境 <版本>」，正文取本文件对应章节并附下载与安装说明。
+- GitHub Actions「打包」改为只手动运行：校验版本后编译两个平台并上传构建产物，不再自动发布。
 
 ## 0.1.0 · 2026-11-14
 

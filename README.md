@@ -127,19 +127,22 @@ COMPOSITE=~/Pictures/绘境/xxx-宫格.png MODEL=nano-banana-2.1 RATIO=16:9 TIER
 
 版本写在三处，必须一致（单元测试 `versions_are_consistent` 会检查）：`package.json`、`src-tauri/Cargo.toml`（改完跑一次 `cargo build` 更新 `Cargo.lock`）、`src-tauri/tauri.conf.json`。界面上显示的版本读取的是应用真实版本。发版前在 [CHANGELOG.md](CHANGELOG.md) 加 `## <版本> · <日期>` 章节。
 
-### 发布（GitHub Actions）
+### 发布（本机产物直接上传）
 
-`.github/workflows/build.yml`：
+先按下面「本机」打好两个产物（`打包产物/绘境_<版本>_universal.dmg`、`打包产物/绘境_<版本>_便携版.exe`），提交并 `git push origin main`，再运行：
 
 ```bash
-git tag v0.1.1 && git push origin v0.1.1     # 推送标签即自动发布
+scripts/release.sh 0.1.1 --dry-run   # 只校验并打印发布说明，不打标签、不创建 Release
+scripts/release.sh 0.1.1             # 正式发布
 ```
 
-1. **校验版本**：标签（去掉 `v`）必须等于 `tauri.conf.json` 的版本，且三处版本一致、CHANGELOG 里有该版本章节，否则直接失败。
-2. **编译**：macOS 通用版 DMG 与 Windows 便携版 exe（原生编译）。
-3. **发布 Release**：标题「绘境 <版本>」，正文取 CHANGELOG 对应章节并附下载与安装说明；附件用 ASCII 文件名 `Huijing_<版本>_universal.dmg`、`Huijing_<版本>_portable.exe`（GitHub 会丢掉附件名里的中文）。
+脚本依次：
 
-在 Actions 页面手动运行「打包」只编译、上传构建产物，不发布。
+1. **校验**：工作区干净、本地 main 与 `origin/main` 一致；三处版本都等于参数、CHANGELOG 里有该版本章节；标签 `v<版本>` 与同名 Release 还不存在；`打包产物/` 里两个文件都在（早于最新提交时给出提醒）。任一不满足直接退出。
+2. **附件**：复制成 ASCII 文件名 `Huijing_<版本>_universal.dmg`、`Huijing_<版本>_portable.exe`（GitHub 会丢掉附件名里的中文），中文写在附件的显示标签里。
+3. **发布**：`gh release create v<版本> --target main`，标题「绘境 <版本>」，正文取 CHANGELOG 对应章节并附下载与安装说明。标签由 gh 在 main 最新提交上创建。
+
+`.github/workflows/build.yml` 只在 Actions 页面手动运行：校验版本一致后在 macOS / Windows 原生编译，上传构建产物（同样的 ASCII 文件名），不发布 Release。
 
 ### 本机
 

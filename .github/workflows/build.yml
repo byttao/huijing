@@ -1,11 +1,9 @@
 name: 打包
 
-# 推送 v<版本> 标签：校验版本 → 编译 macOS / Windows → 自动发布 Release。
-# 手动运行（workflow_dispatch）：只编译并上传构建产物，不发布。
+# 只手动运行（workflow_dispatch）：校验版本 → 编译 macOS / Windows → 上传构建产物。
+# 不自动发布：Release 用本机打好的产物通过 scripts/release.sh 创建（打标签时不会重复编译、重复上传附件）。
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 jobs:
   version:
@@ -28,17 +26,6 @@ jobs:
           if [ "$PKG" != "$VERSION" ] || [ "$CARGO" != "$VERSION" ]; then
             echo "::error::package.json / Cargo.toml / tauri.conf.json 的版本不一致"
             exit 1
-          fi
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            TAG="${GITHUB_REF_NAME#v}"
-            if [ "$TAG" != "$VERSION" ]; then
-              echo "::error::标签 ${GITHUB_REF_NAME} 与 tauri.conf.json 的版本 ${VERSION} 不一致"
-              exit 1
-            fi
-            if ! grep -q "^## ${VERSION} " CHANGELOG.md; then
-              echo "::error::CHANGELOG.md 里没有「## ${VERSION} 」章节"
-              exit 1
-            fi
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -83,7 +70,7 @@ jobs:
       - name: 编译
         run: npx tauri build ${{ matrix.args }}
 
-      # 附件用 ASCII 文件名：GitHub Release 会丢掉附件名里的中文（「绘境_0.1.0_便携版.exe」会变成「_0.1.0_.exe」）
+      # 用与 Release 附件相同的 ASCII 文件名（GitHub 会丢掉附件名里的中文，如「绘境_0.1.0_便携版.exe」变成「_0.1.0_.exe」）
       - name: 制作 DMG（含安装脚本）
         if: runner.os == 'macOS'
         run: bash scripts/macos/make-dmg.sh "" dist-mac "Huijing_${VERSION}_universal.dmg"
@@ -107,45 +94,3 @@ jobs:
         with:
           name: Huijing-Windows
           path: dist-win/*.exe
-
-  release:
-    name: 发布
-    if: github.ref_type == 'tag'
-    needs: [version, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      VERSION: ${{ needs.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: 生成发布说明（取 CHANGELOG 对应章节）
-        shell: bash
-        run: |
-          set -euo pipefail
-          awk -v v="$VERSION" '
-            index($0, "## " v " ") == 1 { found = 1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md > notes.md
-          cat >> notes.md <<EOF
-
-          ## 下载与安装
-
-          - **macOS**（Apple 芯片与 Intel 通用，需要 macOS 10.15 或更新）：下载 \`Huijing_${VERSION}_universal.dmg\`，打开后双击「通用安装-去隔离.command」，它会把「绘境.app」复制到「应用程序」、清除隔离属性并打开。若提示无法打开这个脚本：右键 → 打开。也可以把「绘境.app」拖到「Applications」，首次打开提示无法验证开发者时在终端执行 \`xattr -cr "/Applications/绘境.app"\`。
-          - **Windows**（便携版，不需要安装）：下载 \`Huijing_${VERSION}_portable.exe\`，放到任意文件夹双击运行。设置、队列与历史保存在 exe 同目录的「绘境数据」文件夹里，整个文件夹拷走即用。依赖系统自带的 WebView2（Windows 11 自带，Windows 10 通常已随 Edge 安装）。
-          - **首次使用**：到「设置」填写 GRSAI 的 API Key，点「测试连接」（不扣费）确认可用。生成的图片默认保存在「图片/绘境」文件夹。
-          EOF
-          cat notes.md
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          name: 绘境 ${{ env.VERSION }}
-          body_path: notes.md
-          files: artifacts/*
