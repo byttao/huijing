@@ -15,6 +15,7 @@ import {
   Panel,
   RatioPreview,
   RatioSelect,
+  ScrollField,
   SettingsScroll,
   Thumb,
   ThumbStrip,
@@ -22,6 +23,7 @@ import {
   fileName,
   useFileDrop,
   useLogger,
+  useFieldScroll,
   useRowFlash,
 } from "../ui-kit";
 import { TaskRow } from "../components/TaskRow";
@@ -63,11 +65,9 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
   // 选了张数 / 排法后把宫格预览滚到可见（小窗口下预览在折叠线以下）
   const previewRef = useRef<HTMLDivElement>(null);
   const revealPreview = () => window.setTimeout(() => previewRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 80);
-  // 参数卡片标题栏的「比例与张数 ↓」：用 SettingsScroll 的 ref 把比例那一项滚到顶部
-  // （「下面还有」的滚动提示由 SettingsScroll 自带）。antd Form.Item 不把 id 落到 DOM，id 给控件
-  const paramsScrollRef = useRef<HTMLDivElement>(null);
-  const jumpToSize = () =>
-    paramsScrollRef.current?.querySelector("#gen-ratio")?.closest(".ant-form-item")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  // 参数卡片标题栏的「比例与张数 ↓」：kit useFieldScroll + ScrollField，把「比例 / 张数 / 排法 / 预览」
+  // 这一组滚到参数区顶部（滚动提示行由 SettingsScroll 自带）
+  const fields = useFieldScroll();
   const [submitting, setSubmitting] = useState(false);
 
   // 首次拿到设置时套用默认模型与参数
@@ -278,12 +278,12 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
               title="出图参数"
               className="min-h-0 flex-1"
               extra={
-                <Button type="link" size="small" icon={<DownOutlined />} iconPlacement="end" onClick={jumpToSize}>
+                <Button type="link" size="small" icon={<DownOutlined />} iconPlacement="end" onClick={() => fields.scrollToField("size")}>
                   比例与张数
                 </Button>
               }
             >
-              <SettingsScroll ref={paramsScrollRef}>
+              <SettingsScroll ref={fields.ref}>
                 <Form layout="vertical" component="div" className="flex flex-col gap-3">
                   <Segmented block options={MODES} value={mode} onChange={(v) => setMode(v as Mode)} />
 
@@ -341,88 +341,90 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                       <FieldHint>在左侧队列或「图库」里，对已完成的图点「继续修改」。</FieldHint>
                     ))}
 
-                  {/* 比例、张数、排法与宫格预览放在一起 */}
-                  {model === "gpt-image-2.6" ? (
-                    <Form.Item label="比例 / 尺寸">
-                      <RatioSelect id="gen-ratio" value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={GPT_RATIO_OPTIONS} />
-                    </Form.Item>
-                  ) : (
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                      <Form.Item label="比例">
-                        <RatioSelect id="gen-ratio" value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={NANO_RATIOS} />
+                  {/* 比例、张数、排法与宫格预览放在一起；ScrollField 是「比例与张数 ↓」的跳转锚点 */}
+                  <ScrollField name="size" className="gap-3">
+                    {model === "gpt-image-2.6" ? (
+                      <Form.Item label="比例 / 尺寸">
+                        <RatioSelect value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={GPT_RATIO_OPTIONS} />
                       </Form.Item>
-                      <Form.Item label="分辨率">
-                        <Segmented options={IMAGE_SIZES} value={params.imageSize || "1K"} onChange={(v) => setParams({ imageSize: String(v) })} />
-                      </Form.Item>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                        <Form.Item label="比例">
+                          <RatioSelect value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={NANO_RATIOS} />
+                        </Form.Item>
+                        <Form.Item label="分辨率">
+                          <Segmented options={IMAGE_SIZES} value={params.imageSize || "1K"} onChange={(v) => setParams({ imageSize: String(v) })} />
+                        </Form.Item>
+                      </div>
+                    )}
 
-                  <Form.Item
-                    label="张数"
-                    extra={
-                      multiBlocked ? (
-                        <FieldHint type="warning">{multiBlocked}</FieldHint>
-                      ) : count > 1 ? (
-                        `一次请求画 ${count} 个方案、只扣一次费，按宫格等分拆成 ${count} 张`
-                      ) : (
-                        "选 2–4 张时在一张图里按宫格画多个方案，再等分拆切"
-                      )
-                    }
-                  >
-                    <Segmented
-                      block
-                      options={COUNTS}
-                      value={count}
-                      disabled={!!multiBlocked}
-                      onChange={(v) => {
-                        setCount(Number(v));
-                        revealPreview();
-                      }}
-                    />
-                  </Form.Item>
-
-                  {(count === 2 || count === 3) && (
-                    <Form.Item label="排法">
+                    <Form.Item
+                      label="张数"
+                      extra={
+                        multiBlocked ? (
+                          <FieldHint type="warning">{multiBlocked}</FieldHint>
+                        ) : count > 1 ? (
+                          `一次请求画 ${count} 个方案、只扣一次费，按宫格等分拆成 ${count} 张`
+                        ) : (
+                          "选 2–4 张时在一张图里按宫格画多个方案，再等分拆切"
+                        )
+                      }
+                    >
                       <Segmented
                         block
-                        options={[
-                          { value: "row", label: `横排 ${count}×1` },
-                          { value: "column", label: `竖排 1×${count}` },
-                        ]}
-                        value={plan?.orientation || "row"}
+                        options={COUNTS}
+                        value={count}
+                        disabled={!!multiBlocked}
                         onChange={(v) => {
-                          setParams({ layout: String(v) });
+                          setCount(Number(v));
                           revealPreview();
                         }}
                       />
                     </Form.Item>
-                  )}
 
-                  <div ref={previewRef}>
-                    <Form.Item label={count > 1 ? "预览 · 宫格与尺寸" : "预览"}>
-                      {plan ? (
-                        <RatioPreview
-                          ratio={plan.requestRatio}
-                          cols={plan.cols}
-                          rows={plan.rows}
-                          height={80}
-                          autoText={
-                            plan.count > 1
-                              ? `比例为「自动」：由模型决定整张图的比例，按 ${plan.cols} 列 × ${plan.rows} 行等分拆切，每张比例取决于实际出图`
-                              : "比例为「自动」：由模型决定画面比例，尺寸出图后才知道"
-                          }
-                          caption={<PlanCaption plan={plan} />}
+                    {(count === 2 || count === 3) && (
+                      <Form.Item label="排法">
+                        <Segmented
+                          block
+                          options={[
+                            { value: "row", label: `横排 ${count}×1` },
+                            { value: "column", label: `竖排 1×${count}` },
+                          ]}
+                          value={plan?.orientation || "row"}
+                          onChange={(v) => {
+                            setParams({ layout: String(v) });
+                            revealPreview();
+                          }}
                         />
-                      ) : (
-                        planError && <FieldHint type="warning">{planError}</FieldHint>
-                      )}
-                    </Form.Item>
-                  </div>
+                      </Form.Item>
+                    )}
+
+                    <div ref={previewRef}>
+                      <Form.Item label={count > 1 ? "预览 · 宫格与尺寸" : "预览"}>
+                        {plan ? (
+                          <RatioPreview
+                            ratio={plan.requestRatio}
+                            cols={plan.cols}
+                            rows={plan.rows}
+                            height={80}
+                            autoText={
+                              plan.count > 1
+                                ? `比例为「自动」：由模型决定整张图的比例，按 ${plan.cols} 列 × ${plan.rows} 行等分拆切，每张比例取决于实际出图`
+                                : "比例为「自动」：由模型决定画面比例，尺寸出图后才知道"
+                            }
+                            caption={<PlanCaption plan={plan} />}
+                          />
+                        ) : (
+                          planError && <FieldHint type="warning">{planError}</FieldHint>
+                        )}
+                      </Form.Item>
+                    </div>
+                  </ScrollField>
 
                   {/* kit AdvancedSection：低频参数默认折叠，标题旁显示「已改 N 项」，右侧「恢复默认」 */}
                   <AdvancedSection
-                    // 300px 右栏里标题 +「已改 N 项」+「恢复默认」放不下长标题，只写「高级」
                     title="高级"
+                    description={model === "gpt-image-2.6" ? "背景、输出格式" : "合图分辨率"}
                     changedCount={advancedChanged}
                     extra={
                       advancedChanged > 0 && (

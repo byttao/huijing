@@ -2,7 +2,20 @@
 
 桌面 AI 出图工具：对接 [GRSAI](https://grsai.com/zh/models) 的出图接口，支持**文生图 / 图生图 / 继续修改**三种模式，Rust 端任务队列并发出图并自动下载到本地。
 
-界面：Tauri 2 + React + TypeScript + Ant Design 6，按 [ui-kit](https://github.com/byttao/ui-kit)（v1.5.0，`src/ui-kit/`）规范搭建。后端：Rust（`src-tauri/src/`）。
+界面：Tauri 2 + React + TypeScript + Ant Design 6，按 [ui-kit](https://github.com/byttao/ui-kit)（v1.6.0，`src/ui-kit/`）规范搭建。后端：Rust（`src-tauri/src/`）。
+
+当前版本 **0.1.1**，各版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 下载
+
+到 [Releases](https://github.com/byttao/huijing/releases/latest) 下载最新版：
+
+| 系统 | 文件 | 说明 |
+|---|---|---|
+| macOS（Apple 芯片与 Intel，10.15+） | `Huijing_<版本>_universal.dmg` | 打开后双击「通用安装-去隔离.command」，会复制到「应用程序」、清除隔离属性并打开 |
+| Windows（便携版） | `Huijing_<版本>_portable.exe` | 不需要安装，双击运行；设置、队列与历史存在 exe 同目录的「绘境数据」文件夹，整个文件夹拷走即用。依赖 WebView2 |
+
+首次使用到「设置」填写 GRSAI 的 API Key，点「测试连接」（不扣费）确认可用。
 
 ## 功能
 
@@ -110,13 +123,32 @@ COMPOSITE=~/Pictures/绘境/xxx-宫格.png MODEL=nano-banana-2.1 RATIO=16:9 TIER
 
 ## 打包
 
+### 版本号
+
+版本写在三处，必须一致（单元测试 `versions_are_consistent` 会检查）：`package.json`、`src-tauri/Cargo.toml`（改完跑一次 `cargo build` 更新 `Cargo.lock`）、`src-tauri/tauri.conf.json`。界面上显示的版本读取的是应用真实版本。发版前在 [CHANGELOG.md](CHANGELOG.md) 加 `## <版本> · <日期>` 章节。
+
+### 发布（GitHub Actions）
+
+`.github/workflows/build.yml`：
+
+```bash
+git tag v0.1.1 && git push origin v0.1.1     # 推送标签即自动发布
+```
+
+1. **校验版本**：标签（去掉 `v`）必须等于 `tauri.conf.json` 的版本，且三处版本一致、CHANGELOG 里有该版本章节，否则直接失败。
+2. **编译**：macOS 通用版 DMG 与 Windows 便携版 exe（原生编译）。
+3. **发布 Release**：标题「绘境 <版本>」，正文取 CHANGELOG 对应章节并附下载与安装说明；附件用 ASCII 文件名 `Huijing_<版本>_universal.dmg`、`Huijing_<版本>_portable.exe`（GitHub 会丢掉附件名里的中文）。
+
+在 Actions 页面手动运行「打包」只编译、上传构建产物，不发布。
+
 ### 本机
 
 macOS 通用版（arm64 + x86_64）：
 
 ```bash
 npx tauri build --target universal-apple-darwin --bundles app
-bash scripts/macos/make-dmg.sh "" 打包产物
+bash scripts/macos/make-dmg.sh "" 打包产物                                   # → 打包产物/绘境_<版本>_universal.dmg
+bash scripts/macos/make-dmg.sh "" 打包产物 "Huijing_0.1.1_universal.dmg"     # 第三个参数可指定文件名
 ```
 
 DMG 内含 `绘境.app`、`Applications` 快捷方式、`通用安装-去隔离.command` 与 `安装说明.txt`。
@@ -125,14 +157,10 @@ Windows 便携版（在 macOS 上用 cargo-xwin 交叉编译，不打安装包�
 
 ```bash
 npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --no-bundle
-cp src-tauri/target/x86_64-pc-windows-msvc/release/huijing.exe "打包产物/绘境_0.1.0_便携版.exe"
+cp src-tauri/target/x86_64-pc-windows-msvc/release/huijing.exe "打包产物/绘境_0.1.1_便携版.exe"
 ```
 
 便携版依赖系统自带的 WebView2（Windows 11 自带，Windows 10 通常已随 Edge 安装）；发布版是 GUI 子系统，不弹控制台窗口。
-
-### GitHub Actions
-
-`.github/workflows/build.yml`：在 Actions 页面手动运行「打包」，或推送 `v*` 标签（同时发布 Release）。
 
 ## 应用图标
 

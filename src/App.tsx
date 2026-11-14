@@ -3,6 +3,7 @@ import { PictureOutlined, SettingOutlined, ThunderboltOutlined } from "@ant-desi
 import { App as AntApp } from "antd";
 import { AppShell, ErrorBoundary, NavBadge, ThemeMenu, ThemeToggle, cn, useTaskEvents } from "./ui-kit";
 import brandMark from "./assets/brand-mark.png";
+import pkg from "../package.json";
 import { GeneratePage } from "./pages/GeneratePage";
 import { GalleryPage } from "./pages/GalleryPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -58,7 +59,8 @@ export default function App({ view, setView }: AppProps) {
       onNavigate={setPage}
       sidebarFooter={
         <>
-          <span>版本 V{view?.version ?? "0.1.0"}</span>
+          {/* 版本取 Rust 端的 CARGO_PKG_VERSION；设置读到之前用 package.json 的版本（单元测试保证三处一致） */}
+          <span>版本 V{view?.version ?? pkg.version}</span>
           <span className="flex items-center gap-1">
             <ThemeMenu />
             <ThemeToggle />

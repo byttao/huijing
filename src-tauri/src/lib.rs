@@ -169,3 +169,18 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("启动绘境失败");
 }
+
+#[cfg(test)]
+mod tests {
+    /// 发布前的版本一致性：Cargo.toml、tauri.conf.json、package.json 必须同一版本
+    /// （CI 另外校验 v* 标签与 tauri.conf.json 一致）
+    #[test]
+    fn versions_are_consistent() {
+        let read = |p: &str| -> serde_json::Value {
+            serde_json::from_str(&std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).unwrap()).unwrap()
+        };
+        let cargo = env!("CARGO_PKG_VERSION");
+        assert_eq!(read("tauri.conf.json")["version"], cargo, "tauri.conf.json 与 Cargo.toml 版本不一致");
+        assert_eq!(read("../package.json")["version"], cargo, "package.json 与 Cargo.toml 版本不一致");
+    }
+}
