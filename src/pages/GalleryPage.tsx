@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppstoreOutlined, CopyOutlined, DeleteOutlined, EyeOutlined, FolderOpenOutlined, PictureOutlined } from "@ant-design/icons";
 import { App as AntApp, Button, Descriptions, Segmented, Typography } from "antd";
-import { EmptyState, ImageGrid, ListWell, LogViewer, Page, Panel, Thumb, Workspace, fileName, useLogger } from "../ui-kit";
+import { EmptyState, ImageBadge, ImageGrid, ListWell, LogViewer, Page, Panel, Thumb, Workspace, fileName, useLogger } from "../ui-kit";
 import { LogActions } from "../components/LogActions";
 import { api, errorText } from "../lib/api";
 import { formatTime, modeLabel, modelLabel, paramsSummary, shortPrompt, taskNo } from "../lib/options";
@@ -33,7 +33,6 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
   const [filter, setFilter] = useState<Filter>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const gridRef = useRef<HTMLDivElement>(null);
 
   const items = useMemo<GalleryItem[]>(
     () =>
@@ -53,11 +52,7 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
     if (!task || !key) return false;
     setFilter("all");
     setSelectedKey(key);
-    // ImageGrid 不会把选中项滚到可见，这里按选中态找到瓦片再滚动
-    window.setTimeout(
-      () => gridRef.current?.querySelector('[aria-pressed="true"]')?.scrollIntoView({ behavior: "smooth", block: "center" }),
-      60
-    );
+    // ImageGrid 在 selectedKey 变化时自动把选中瓦片滚到可见
     return true;
   };
   useEffect(() => {
@@ -209,7 +204,7 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
           title={`图库 · ${items.length} 张`}
           extra={<Segmented size="small" options={FILTERS} value={filter} onChange={(v) => setFilter(v as Filter)} />}
         >
-          <ListWell ref={gridRef} className="p-3">
+          <ListWell className="p-3">
             {items.length === 0 ? (
               <EmptyState
                 icon={<PictureOutlined />}
@@ -222,10 +217,11 @@ export function GalleryPage({ tasks, onEdit, focus }: GalleryPageProps) {
                   key: i.key,
                   path: i.file,
                   alt: `${taskNo(i.task, i.file)} ${i.task.prompt}`,
-                  badge: <span className="rounded-sm border bg-container px-1 text-sm tabular-nums text-text-secondary">{taskNo(i.task, i.file)}</span>,
+                  badge: <ImageBadge>{taskNo(i.task, i.file)}</ImageBadge>,
                 }))}
                 // 长条切片（如 1376×383）完整显示、四周留底色：ImageGrid 没有 fit 参数，从外层改 img 的 object-fit
                 className="[&_img]:object-contain"
+                badgePlacement="top-left"
                 selectedKey={selected?.key}
                 onSelect={setSelectedKey}
                 previewIndex={previewIndex}

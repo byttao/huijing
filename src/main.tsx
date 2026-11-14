@@ -4,8 +4,8 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./index.css";
 import App from "./App";
-import { THEMES, ThemeProvider, pushLog, type Accent, type LogLevel, type ThemeMode } from "./ui-kit";
-import { ErrorBoundary } from "./components/ErrorBoundary";
+import { App as AntApp } from "antd";
+import { ErrorBoundary, THEMES, ThemeProvider, pushLog, type Accent, type LogLevel, type ThemeMode } from "./ui-kit";
 import { api } from "./lib/api";
 import type { SettingsView } from "./lib/types";
 
@@ -24,10 +24,12 @@ const MODES: ThemeMode[] = ["light", "dark", "system"];
  */
 function Root() {
   const [view, setView] = useState<SettingsView | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // ThemeProvider 外面拿不到 App.useApp()：错误先放进 state，由里面的 RootNotice 提示
+  const [notice, setNotice] = useState<{ text: string; nonce: number } | null>(null);
+  const fail = (text: string) => setNotice({ text, nonce: Date.now() });
 
   useEffect(() => {
-    api.getSettings().then(setView).catch((err) => setLoadError(String(err)));
+    api.getSettings().then(setView).catch((err) => fail(`读取设置失败：${String(err)}`));
   }, []);
 
   const viewRef = useRef(view);
@@ -37,7 +39,7 @@ function Root() {
     if (!current) return;
     const next = { ...current, settings: { ...current.settings, ...patch } };
     setView(next); // 先切过去，再写文件
-    api.saveSettings(next.settings).then(setView).catch(() => {});
+    api.saveSettings(next.settings).then(setView).catch((err) => fail(`保存主题失败：${String(err)}`));
   }, []);
 
   const s = view?.settings;
@@ -51,11 +53,21 @@ function Root() {
       onAccentChange={(a) => saveTheme({ themeAccent: a })}
       onModeChange={(m) => saveTheme({ themeMode: m })}
     >
+      <RootNotice notice={notice} />
       <ErrorBoundary>
-        <App view={view} setView={setView} loadError={loadError} />
+        <App view={view} setView={setView} />
       </ErrorBoundary>
     </ThemeProvider>
   );
+}
+
+/** 在 ThemeProvider 里面用 App.useApp().message 提示入口层的错误 */
+function RootNotice({ notice }: { notice: { text: string; nonce: number } | null }) {
+  const { message } = AntApp.useApp();
+  useEffect(() => {
+    if (notice) message.error(notice.text);
+  }, [notice, message]);
+  return null;
 }
 
 createRoot(document.getElementById("root")!).render(

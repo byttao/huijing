@@ -34,6 +34,9 @@ export const GPT_RATIOS: { value: string; size: string }[] = [
   { value: "1:2", size: "896×1792" },
 ];
 
+/** RatioSelect 用的 GPT 选项：比例 + 1K 像素尺寸说明 */
+export const GPT_RATIO_OPTIONS = GPT_RATIOS.map((r) => ({ value: r.value, size: r.value === "auto" ? undefined : r.size }));
+
 export const NANO_RATIOS = ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9", "1:4", "4:1", "1:8", "8:1"];
 
 export const IMAGE_SIZES = ["1K", "2K", "4K"];

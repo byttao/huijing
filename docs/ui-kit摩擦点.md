@@ -79,3 +79,12 @@
 2. **`ImageGrid` 没有 `fit` 参数**：瓦片里的图固定 `object-cover`，1376×383 这类长条切片被裁成方块，看不出形状。绘境从外层用 `className="[&_img]:object-contain"` 改成完整显示（瓦片底色作留白）。建议加 `fit="cover" | "contain"`（`Thumb` 已经有）。
 3. **`SettingsScroll` 没有「下面还有内容」的提示，也拿不到滚动容器**：最小窗口下参数卡片只露出模式、模型、提示词，看不出能滚。绘境用 IntersectionObserver 观察预览块，不可见时在 Panel 标题栏放「比例与张数 ↓」入口，选张数 / 排法后 `scrollIntoView`。建议 `SettingsScroll` 支持 `ref`，并提供可选的底部渐隐 / 「更多」提示。
 4. **右栏参数的「高级」折叠没有约定**：低频参数收进 antd `Collapse ghost`，需要 `-mx-3` 抵消左右内边距才能与其他表单项对齐；kit 可以给一个 `SettingsSection` 的可折叠变体。
+
+## 十、升级到 1.4.0 时新发现
+
+升级顺利：从 `v1.4.0` 标签 `git archive` 取内容覆盖，旧代码不改也能编译。已换用 `ErrorBoundary`（入口一层 + 三页各包 `size="page"`）、`ThumbStrip caption`、`LinkTag`、`useRowFlash(2500)`、`ImageBadge` + `badgePlacement`、`RatioSelect`、`createMockTaskBackend`（浏览器模式的任务数据源，`src/lib/taskSource.ts`），删掉了自写的 `ErrorBoundary.tsx`、`Ratio.tsx`、`PartStrip`、图库手动滚动和 `[aria-pressed]` 查找。真实窗口里 `LinkTag` 的跳转 / 置灰、`useRowFlash` 的 2.5 秒高亮、`ImageGrid` 选中定位都正常；八·7（深色下 `Descriptions` 长路径不省略）这次没有复现。
+
+1. **`ThumbStrip` / `ImageGrid` 仍然没有 `fit`**：两者内部的图都是 `object-cover`，多合一的长条切片（如 1376×383）会被裁成方块。绘境继续从外层用 `className="[&_img]:object-contain"` 覆盖（`TaskRow.tsx` 的切片条、`GalleryPage.tsx` 的网格）。`Thumb` 已有 `fit`，建议 `ThumbStrip` 与 `ImageGrid` 透传同名参数。
+2. **`LogViewer` 浮动工具条遮挡长日志行（九·1）在 1.4.0 里仍未处理**：绘境继续用自写的 `LogActions` 放在 `Panel extra`。
+3. **`createMockTaskBackend` 只覆盖任务列表**：页面里其他 `invoke`（读设置、宫格规划等）在浏览器里仍要自己伪造 `__TAURI_INTERNALS__`。若配方 / demo 想支持「整页在浏览器里跑」，可以再给一个通用的 `createMockInvoke(handlers)`。
+4. **设置页配方的输入校验落到项目自己写**：这次实测发现「自定义代理 + 空地址」能被保存，保存后图片下载全部失败。绘境已补 `validateStatus` / `help` 并禁用保存（照配方写法），Rust 端加载设置时也会把无效的自定义代理回退为「不使用」。配方里若能放一个「依赖开关的必填字段」示例，更容易被照抄。

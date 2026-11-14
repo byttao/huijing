@@ -94,6 +94,10 @@ impl Settings {
         }
         self.api_key = self.api_key.trim().to_string();
         self.proxy.url = self.proxy.url.trim().to_string();
+        // 自定义代理但地址无效（空或不是 http / socks5）时回退为不使用，避免请求全部失败
+        if self.proxy.mode == ProxyMode::Custom && !valid_proxy_url(&self.proxy.url) {
+            self.proxy.mode = ProxyMode::None;
+        }
         self
     }
 
@@ -109,6 +113,13 @@ impl Settings {
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         write_atomic(path, text.as_bytes())
     }
+}
+
+/// 代理地址是否为 http(s):// 或 socks5(h):// 开头且带主机
+pub fn valid_proxy_url(url: &str) -> bool {
+    ["http://", "https://", "socks5://", "socks5h://"]
+        .iter()
+        .any(|p| url.strip_prefix(p).is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/')))
 }
 
 /// 先写临时文件再改名，避免写到一半崩溃留下坏文件。
@@ -185,6 +196,18 @@ mod tests {
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn invalid_custom_proxy_falls_back_to_none() {
+        let mut s = Settings::default();
+        s.proxy.mode = ProxyMode::Custom;
+        s.proxy.url = "  ".into();
+        assert_eq!(s.clone().normalized().proxy.mode, ProxyMode::None);
+        s.proxy.url = "socks5://127.0.0.1:7891".into();
+        assert_eq!(s.normalized().proxy.mode, ProxyMode::Custom);
+        assert!(!valid_proxy_url("http://"));
+        assert!(valid_proxy_url("http://127.0.0.1:9"));
     }
 
     #[test]

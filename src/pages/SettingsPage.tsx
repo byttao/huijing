@@ -17,12 +17,11 @@ import {
 } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { LogViewer, Page, Panel, SettingsScroll, SettingsSection, ThemePicker, Workspace, useLogger, useTheme, type ThemeMode } from "../ui-kit";
+import { FieldHint, LogViewer, Page, Panel, RatioSelect, SettingsScroll, SettingsSection, ThemePicker, Workspace, useLogger, useTheme, type ThemeMode } from "../ui-kit";
 import brandMark from "../assets/brand-mark.png";
 import { LogActions } from "../components/LogActions";
 import { api, errorText } from "../lib/api";
-import { BACKGROUNDS, IMAGE_SIZES, MODELS, OUTPUT_FORMATS } from "../lib/options";
-import { gptRatioOptions, nanoRatioOptions } from "../components/Ratio";
+import { BACKGROUNDS, GPT_RATIO_OPTIONS, IMAGE_SIZES, MODELS, NANO_RATIOS, OUTPUT_FORMATS } from "../lib/options";
 import type { GenParams, ProxyMode, Settings, SettingsView } from "../lib/types";
 
 const WEBSITE = "https://grsai.com/zh/models";
@@ -132,6 +131,16 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
   };
 
   const proxyOff = draft.proxy.mode === "none";
+  // 自定义代理必须填合法地址，否则保存后请求会直接失败
+  const proxyUrl = draft.proxy.url.trim();
+  const proxyError =
+    draft.proxy.mode !== "custom"
+      ? null
+      : !proxyUrl
+        ? "选了「自定义」就要填写代理地址"
+        : !/^(https?|socks5h?):\/\/[^\s/]+/.test(proxyUrl)
+          ? "格式应为 http://主机:端口 或 socks5://主机:端口"
+          : null;
 
   return (
     <Page>
@@ -185,7 +194,8 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
                 放弃修改
               </Button>
             )}
-            <Button type="primary" block loading={saving} disabled={!dirty} onClick={save}>
+            {proxyError && <FieldHint type="warning">代理地址有误，改好后才能保存</FieldHint>}
+            <Button type="primary" block loading={saving} disabled={!dirty || !!proxyError} onClick={save}>
               保存设置
             </Button>
           </>
@@ -218,12 +228,15 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
                   <Segmented options={PROXY_MODES} value={draft.proxy.mode} onChange={(v) => patchProxy({ mode: v as ProxyMode })} />
                 </Form.Item>
                 {draft.proxy.mode === "custom" && (
-                  <Form.Item label="代理地址">
+                  <Form.Item
+                    label="代理地址"
+                    validateStatus={proxyError ? "error" : undefined}
+                    help={proxyError ?? undefined}
+                  >
                     <Input
                       value={draft.proxy.url}
                       onChange={(e) => patchProxy({ url: e.target.value })}
                       placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7891"
-                      status={draft.proxy.url && !/^(https?|socks5h?):\/\//.test(draft.proxy.url) ? "error" : undefined}
                     />
                   </Form.Item>
                 )}
@@ -268,7 +281,7 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
                     <Select value={draft.defaultCount} onChange={(v) => patch({ defaultCount: v })} options={COUNTS} />
                   </Form.Item>
                   <Form.Item label="GPT · 比例 / 尺寸">
-                    <Select value={draft.gptParams.aspectRatio} onChange={(v) => patchGpt({ aspectRatio: v })} options={gptRatioOptions} />
+                    <RatioSelect value={draft.gptParams.aspectRatio} onChange={(v) => patchGpt({ aspectRatio: v })} options={GPT_RATIO_OPTIONS} />
                   </Form.Item>
                   <Form.Item label="GPT · 背景">
                     <Segmented block options={BACKGROUNDS} value={draft.gptParams.background} onChange={(v) => patchGpt({ background: String(v) })} />
@@ -283,7 +296,7 @@ export function SettingsPage({ view, onSaved }: SettingsPageProps) {
                   </Form.Item>
                   <span />
                   <Form.Item label="Nano · 比例">
-                    <Select value={draft.nanoParams.aspectRatio} onChange={(v) => patchNano({ aspectRatio: v })} options={nanoRatioOptions} />
+                    <RatioSelect value={draft.nanoParams.aspectRatio} onChange={(v) => patchNano({ aspectRatio: v })} options={NANO_RATIOS} />
                   </Form.Item>
                   <Form.Item label="Nano · 分辨率">
                     <Segmented block options={IMAGE_SIZES} value={draft.nanoParams.imageSize || "1K"} onChange={(v) => patchNano({ imageSize: String(v) })} />

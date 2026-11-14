@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { PictureOutlined, SettingOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { App as AntApp } from "antd";
-import { AppShell, NavBadge, ThemeMenu, ThemeToggle, cn, useTaskEvents } from "./ui-kit";
+import { AppShell, ErrorBoundary, NavBadge, ThemeMenu, ThemeToggle, cn, useTaskEvents } from "./ui-kit";
 import brandMark from "./assets/brand-mark.png";
 import { GeneratePage } from "./pages/GeneratePage";
 import { GalleryPage } from "./pages/GalleryPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { api } from "./lib/api";
+import { taskSource } from "./lib/taskSource";
 import { isActive } from "./lib/options";
 import type { EditRequest, SettingsView, Task } from "./lib/types";
 
@@ -15,20 +15,16 @@ type PageKey = "generate" | "gallery" | "settings";
 interface AppProps {
   view: SettingsView | null;
   setView: (view: SettingsView) => void;
-  loadError: string | null;
 }
 
-export default function App({ view, setView, loadError }: AppProps) {
+export default function App({ view, setView }: AppProps) {
   const [page, setPage] = useState<PageKey>("generate");
   // 先订阅 task-updated / task-removed 再加载列表，加载期间的更新不会丢
-  const { tasks, loaded: tasksLoaded } = useTaskEvents<Task>({ load: api.listTasks });
+  const { tasks, loaded: tasksLoaded } = useTaskEvents<Task>(taskSource);
   const [editRequest, setEditRequest] = useState<EditRequest | null>(null);
   const [galleryFocus, setGalleryFocus] = useState<{ taskId: string; file?: string; nonce: number } | null>(null);
   const { message } = AntApp.useApp();
 
-  useEffect(() => {
-    if (loadError) message.error(`读取设置失败：${loadError}`);
-  }, [loadError, message]);
 
   const startEdit = useCallback(
     (task: Task, file?: string) => {
@@ -72,26 +68,32 @@ export default function App({ view, setView, loadError }: AppProps) {
     >
       {/* 三个页面常驻，切换时只隐藏：各页的日志、草稿与事件订阅不丢 */}
       <div className={cn("h-full", page !== "generate" && "hidden")}>
-        <GeneratePage
-          active={page === "generate"}
-          tasks={tasks}
-          tasksLoaded={tasksLoaded}
-          settings={view}
-          editRequest={editRequest}
-          onEdit={startEdit}
-          onGoSettings={() => setPage("settings")}
-          onShowInGallery={(task, file) => {
-            setGalleryFocus({ taskId: task.id, file, nonce: Date.now() });
-            setPage("gallery");
-            message.info(`#${task.number} 已从队列清除，在图库中定位`);
-          }}
-        />
+        <ErrorBoundary size="page">
+          <GeneratePage
+            active={page === "generate"}
+            tasks={tasks}
+            tasksLoaded={tasksLoaded}
+            settings={view}
+            editRequest={editRequest}
+            onEdit={startEdit}
+            onGoSettings={() => setPage("settings")}
+            onShowInGallery={(task, file) => {
+              setGalleryFocus({ taskId: task.id, file, nonce: Date.now() });
+              setPage("gallery");
+              message.info(`#${task.number} 已从队列清除，在图库中定位`);
+            }}
+          />
+        </ErrorBoundary>
       </div>
       <div className={cn("h-full", page !== "gallery" && "hidden")}>
-        <GalleryPage tasks={tasks} onEdit={startEdit} focus={galleryFocus} />
+        <ErrorBoundary size="page">
+            <GalleryPage tasks={tasks} onEdit={startEdit} focus={galleryFocus} />
+        </ErrorBoundary>
       </div>
       <div className={cn("h-full", page !== "settings" && "hidden")}>
-        <SettingsPage view={view} onSaved={setView} />
+        <ErrorBoundary size="page">
+            <SettingsPage view={view} onSaved={setView} />
+        </ErrorBoundary>
       </div>
     </AppShell>
   );

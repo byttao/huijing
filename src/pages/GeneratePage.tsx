@@ -12,6 +12,7 @@ import {
   Page,
   Panel,
   RatioPreview,
+  RatioSelect,
   SettingsScroll,
   Thumb,
   ThumbStrip,
@@ -19,12 +20,12 @@ import {
   fileName,
   useFileDrop,
   useLogger,
+  useRowFlash,
 } from "../ui-kit";
-import { gptRatioOptions, nanoRatioOptions } from "../components/Ratio";
 import { TaskRow } from "../components/TaskRow";
 import { LogActions } from "../components/LogActions";
 import { api, errorText } from "../lib/api";
-import { BACKGROUNDS, IMAGE_SIZES, MODELS, MODES, OUTPUT_FORMATS, isActive, shortPrompt, sizeText, taskNo } from "../lib/options";
+import { BACKGROUNDS, GPT_RATIO_OPTIONS, IMAGE_SIZES, MODELS, MODES, NANO_RATIOS, OUTPUT_FORMATS, isActive, shortPrompt, sizeText, taskNo } from "../lib/options";
 import type { EditRequest, GenParams, GridPlan, Mode, ModelId, SettingsView, Task } from "../lib/types";
 
 const IS_MAC = /Mac/i.test(navigator.userAgent);
@@ -211,8 +212,8 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
   };
 
   // 「改自 #7」：滚动到原记录并高亮闪一下；原记录已移出队列时去图库定位
-  const [flashId, setFlashId] = useState<string | null>(null);
-  const flashTimer = useRef<number | undefined>(undefined);
+  // kit useRowFlash：定位后高亮 2.5 秒自动取消（ListRow 的 highlight 负责滚到可见）
+  const { flashKey, flash } = useRowFlash(2500);
   const jumpToParent = (task: Task) => {
     const parent = task.parentId ? byId.get(task.parentId) : undefined;
     if (!parent) return;
@@ -222,9 +223,7 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
       return;
     }
     // kit ListRow 的 highlight：主色内描边并滚到可见；保持 2.5 秒后取消
-    setFlashId(parent.id);
-    window.clearTimeout(flashTimer.current);
-    flashTimer.current = window.setTimeout(() => setFlashId(null), 2500);
+    flash(parent.id);
   };
 
   const actions = {
@@ -345,12 +344,12 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                   {/* 比例、张数、排法与宫格预览放在一起 */}
                   {model === "gpt-image-2.6" ? (
                     <Form.Item label="比例 / 尺寸">
-                      <Select value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={gptRatioOptions} />
+                      <RatioSelect value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={GPT_RATIO_OPTIONS} />
                     </Form.Item>
                   ) : (
                     <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                       <Form.Item label="比例">
-                        <Select value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={nanoRatioOptions} />
+                        <RatioSelect value={params.aspectRatio} onChange={(v) => setParams({ aspectRatio: v })} options={NANO_RATIOS} />
                       </Form.Item>
                       <Form.Item label="分辨率">
                         <Segmented options={IMAGE_SIZES} value={params.imageSize || "1K"} onChange={(v) => setParams({ imageSize: String(v) })} />
@@ -522,7 +521,7 @@ export function GeneratePage({ active, tasks, tasksLoaded, settings, editRequest
                     key={t.id}
                     task={t}
                     parent={t.parentId ? byId.get(t.parentId) : undefined}
-                    highlighted={flashId === t.id}
+                    highlighted={flashKey === t.id}
                     onJumpParent={jumpToParent}
                     {...actions}
                   />

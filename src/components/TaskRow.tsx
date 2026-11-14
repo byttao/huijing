@@ -11,8 +11,8 @@ import {
   RedoOutlined,
   StopOutlined,
 } from "@ant-design/icons";
-import { Button, Dropdown, Image, Progress, Tag, Tooltip, Typography, type MenuProps } from "antd";
-import { ListRow, StatusTag, Thumb } from "../ui-kit";
+import { Button, Dropdown, Progress, Tag, Tooltip, Typography, type MenuProps } from "antd";
+import { LinkTag, ListRow, StatusTag, Thumb, ThumbStrip } from "../ui-kit";
 import { bytesText, formatTime, isActive, modeLabel, modelLabel, paramsSummary, shortPrompt } from "../lib/options";
 import type { Task } from "../lib/types";
 
@@ -29,7 +29,7 @@ export interface TaskActions {
 interface TaskRowProps extends TaskActions {
   task: Task;
   parent?: Task;
-  /** 被「改自」跳转定位时高亮（kit ListRow 的 highlight：主色内描边并滚到可见） */
+  /** 被「改自」跳转定位时高亮（kit useRowFlash + ListRow highlight：主色内描边并滚到可见） */
   highlighted?: boolean;
   /** 点击「改自 #7」：定位到原记录 */
   onJumpParent?: (task: Task) => void;
@@ -158,7 +158,13 @@ export function TaskRow({ task, parent, highlighted, onJumpParent, onEdit, onRet
           ) : null}
           {task.error && <Typography.Text className="text-sm">{task.error}</Typography.Text>}
           {task.notice && <Typography.Text type="warning" className="text-sm">{task.notice}</Typography.Text>}
-          {parts.length > 0 && <PartStrip number={task.number} parts={parts} />}
+          {parts.length > 0 && (
+            <ThumbStrip
+              // 长条切片完整显示：ThumbStrip 没有 fit 参数，从外层把 img 改成 contain
+              className="[&_img]:object-contain"
+              items={parts.map((p, i) => ({ path: p, caption: `#${task.number}-${i + 1}`, alt: `#${task.number}-${i + 1}` }))}
+            />
+          )}
         </>
       }
       trailing={
@@ -210,58 +216,15 @@ export function TaskRow({ task, parent, highlighted, onJumpParent, onEdit, onRet
   );
 }
 
-/**
- * 拆切后各张：kit Thumb + 每张下面写编号 #12-1。
- * 没用 kit 的 ThumbStrip：它没有「图下说明文字」槽，只能悬停看名字，而切片编号需要常显。
- */
-function PartStrip({ number, parts }: { number: number; parts: string[] }) {
-  return (
-    <Image.PreviewGroup>
-      <div className="flex flex-wrap gap-1.5">
-        {parts.map((p, i) => (
-          <span key={p} className="flex flex-col items-center gap-0.5">
-            <Thumb path={p} size="sm" fit="contain" alt={`#${number}-${i + 1}`} />
-            <span className="text-sm tabular-nums text-text-tertiary">
-              #{number}-{i + 1}
-            </span>
-          </span>
-        ))}
-      </div>
-    </Image.PreviewGroup>
-  );
-}
-
-/** 「改自 #7」/「改自 #7-2」：可点击跳到原记录；原记录已删除时置灰 */
+/** 「改自 #7」/「改自 #7-2」：kit LinkTag，点击跳到原记录；原记录已删除时 disabled 置灰 */
 function ParentTag({ task, parent, onJump }: { task: Task; parent?: Task; onJump?: (task: Task) => void }) {
   const number = parent?.number ?? task.parentNumber;
   const label = number ? `改自 #${number}${task.parentPart ? `-${task.parentPart}` : ""}` : "改自已删除的记录";
-  if (!parent) {
-    return (
-      <Tooltip title="原记录已删除">
-        <Tag icon={<BranchesOutlined />} variant="filled" className="text-text-tertiary">
-          {label}
-        </Tag>
-      </Tooltip>
-    );
-  }
   return (
-    <Tooltip title={`${parent.inQueue ? "定位到" : "在图库中查看"}原记录：${shortPrompt(parent.prompt, 24)}`}>
-      <Tag
-        icon={<BranchesOutlined />}
-        variant="outlined"
-        role="button"
-        tabIndex={0}
-        className="cursor-pointer transition-colors duration-fast hover:border-primary hover:text-primary-text"
-        onClick={() => onJump?.(task)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onJump?.(task);
-          }
-        }}
-      >
+    <Tooltip title={parent ? `${parent.inQueue ? "定位到" : "在图库中查看"}原记录：${shortPrompt(parent.prompt, 24)}` : "原记录已删除"}>
+      <LinkTag icon={<BranchesOutlined />} disabled={!parent} onClick={() => onJump?.(task)}>
         {label}
-      </Tag>
+      </LinkTag>
     </Tooltip>
   );
 }
